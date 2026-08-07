@@ -21,6 +21,11 @@ origin_offset = [0.0, 0.0, 0.0]
 original_fps = 0
 original_cursor_pos = [0.0, 0.0, 0.0]
 
+is_handling_mode_change = False
+
+last_known_mario_mode = "OBJECT"
+mesh_vertex_offsets = {}
+
 class SM64Surface(ct.Structure):
     _fields_ = [
         ('surftype', ct.c_int16),
@@ -109,7 +114,10 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     stop_input_reader()
 
     if sm64 != None:
-        stop_tick_mario()
+        try:
+            stop_tick_mario()
+        except:
+            pass
 
     this_path = os.path.dirname(os.path.realpath(__file__))
     dll_name = 'sm64.dll' if platform.system() == 'Windows' else 'libsm64.so'
@@ -154,6 +162,15 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     bpy.context.scene.render.fps = 30
     bpy.ops.screen.animation_play()
     bpy.app.handlers.frame_change_pre.append(tick_mario)
+
+    global mesh_vertex_offsets
+    mesh_vertex_offsets.clear()
+    last_known_mario_mode = 'OBJECT'
+
+    if bpy.app.timers.is_registered(mario_mode_watcher_timer):
+        bpy.app.timers.unregister(mario_mode_watcher_timer)
+        
+    bpy.app.timers.register(mario_mode_watcher_timer)
 
     tick_count = 0
 
@@ -410,7 +427,7 @@ def initialize_all_data(texture_buffer):
     mesh.update()
 
 def update_mesh_data(mesh: bpy.types.Mesh):
-    global mario_geo, origin_offset, SM64_SCALE_FACTOR
+    global mario_geo, origin_offset, SM64_SCALE_FACTOR, mesh_vertex_offsets
     
     num_tris = mario_geo.numTrianglesUsed
     num_verts = num_tris * 3
@@ -432,6 +449,14 @@ def update_mesh_data(mesh: bpy.types.Mesh):
         coords[base_blender + 6] = origin_offset[0] + mario_geo.position_data[base_sm64 + 6] / SM64_SCALE_FACTOR
         coords[base_blender + 7] = origin_offset[1] - mario_geo.position_data[base_sm64 + 8] / SM64_SCALE_FACTOR
         coords[base_blender + 8] = origin_offset[2] + mario_geo.position_data[base_sm64 + 7] / SM64_SCALE_FACTOR
+
+        for v in range(3):
+            v_idx = (i * 3) + v
+            if v_idx in mesh_vertex_offsets:
+                off_x, off_y, off_z = mesh_vertex_offsets[v_idx]
+                coords[(i * 9) + (v * 3) + 0] += off_x
+                coords[(i * 9) + (v * 3) + 1] += off_y
+                coords[(i * 9) + (v * 3) + 2] += off_z
 
     mesh.vertices.foreach_set("co", coords)
 
@@ -468,7 +493,7 @@ def update_mesh_data(mesh: bpy.types.Mesh):
 
 
 def update_mesh_data_fast(mesh: bpy.types.Mesh):
-    global mario_geo, origin_offset, SM64_SCALE_FACTOR
+    global mario_geo, origin_offset, SM64_SCALE_FACTOR, mesh_vertex_offsets
     
     num_tris = mario_geo.numTrianglesUsed
     coords = [0.0] * (len(mesh.vertices) * 3)
@@ -489,6 +514,80 @@ def update_mesh_data_fast(mesh: bpy.types.Mesh):
         coords[base_blender + 7] = origin_offset[1] - mario_geo.position_data[base_sm64 + 8] / SM64_SCALE_FACTOR
         coords[base_blender + 8] = origin_offset[2] + mario_geo.position_data[base_sm64 + 7] / SM64_SCALE_FACTOR
 
+        for v in range(3):
+            v_idx = (i * 3) + v
+            if v_idx in mesh_vertex_offsets:
+                off_x, off_y, off_z = mesh_vertex_offsets[v_idx]
+                coords[(i * 9) + (v * 3) + 0] += off_x
+                coords[(i * 9) + (v * 3) + 1] += off_y
+                coords[(i * 9) + (v * 3) + 2] += off_z
+
     mesh.vertices.foreach_set("co", coords)
     mesh.validate(verbose=False)
     mesh.update()
+
+def mario_mode_watcher_timer():
+    global mario_geo, SM64_SCALE_FACTOR, origin_offset, mesh_vertex_offset, last_known_mario_mode
+    
+    mario_obj = bpy.data.objects.get('LibSM64 Mario')
+    if not mario_obj:
+        return None
+        
+    current_mode = mario_obj.mode
+
+    if current_mode != last_known_mario_mode:
+        
+        screen_ctx = None
+        for win in bpy.context.window_manager.windows:
+            if win.screen:
+                screen_ctx = win.screen
+                break
+
+        if last_known_mario_mode == 'OBJECT' and current_mode == 'EDIT':
+            if screen_ctx and screen_ctx.is_animation_playing:
+                # Force-cancel the active timeline playback loop 
+                bpy.ops.screen.animation_cancel(restore_frame=False)
+                print("Pausing Animation")
+
+            tool_settings = bpy.context.scene.tool_settings
+            tool_settings.use_proportional_edit = True
+            tool_settings.proportional_edit_falloff = 'SMOOTH'
+            tool_settings.proportional_size = 0.01
+
+        elif last_known_mario_mode == 'EDIT' and current_mode == 'OBJECT':
+            if mario_geo:
+                mesh = mario_obj.data
+                
+                num_tris = mario_geo.numTrianglesUsed
+                current_coords = [0.0] * (len(mesh.vertices) * 3)
+                mesh.vertices.foreach_get("co", current_coords)
+                
+                for i in range(num_tris):
+                    base_sm64 = 9 * i
+                    base_blender = 9 * i
+                    
+                    for v in range(3):
+                        v_idx = base_blender + (v * 3)
+                        s_idx = base_sm64 + (v * 3)
+                        
+                        sim_x = origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR
+                        sim_y = origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR
+                        sim_z = origin_offset[2] + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
+                        
+                        offset_x = current_coords[v_idx + 0] - sim_x
+                        offset_y = current_coords[v_idx + 1] - sim_y
+                        offset_z = current_coords[v_idx + 2] - sim_z
+                        
+                        vert_number = (i * 3) + v
+                        mesh_vertex_offsets[vert_number] = (offset_x, offset_y, offset_z)
+
+            if screen_ctx and not screen_ctx.is_animation_playing:
+                bpy.ops.screen.animation_play()
+                print("ResumingAnimation")
+
+            tool_settings = bpy.context.scene.tool_settings
+            tool_settings.use_proportional_edit = False
+
+        last_known_mario_mode = current_mode
+
+    return 0.03
