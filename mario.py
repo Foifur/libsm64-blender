@@ -1,5 +1,4 @@
 import bpy
-import bmesh
 import os
 import platform
 import ctypes as ct
@@ -122,6 +121,11 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_mario_create.restype = ct.c_int32
     sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(SM64MarioInputs), ct.POINTER(SM64MarioState), ct.POINTER(SM64MarioGeometryBuffers) ]
 
+    if ('libsm64_mario_mesh' in bpy.data.meshes):
+        old_mesh = bpy.data.meshes['libsm64_mario_mesh']
+        old_mesh.user_clear()
+        bpy.data.meshes.remove(old_mesh)
+
     with open(os.path.expanduser(rom_path), 'rb') as file:
         rom_bytes = bytearray(file.read())
         rom_chars = ct.c_char * len(rom_bytes)
@@ -169,30 +173,34 @@ def stop_tick_mario():
     sm64 = None
     stop_input_reader()
 
-def tick_mario(x0, x1):
+def tick_mario(scene, depsgraph=None):
     global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
-
+    
     if not ('LibSM64 Mario' in bpy.data.objects):
         stop_tick_mario()
         return 0
 
     sample_input_reader(mario_inputs)
-
+    
+    view3d = None
     for a in bpy.context.window.screen.areas:
         if a.type == 'VIEW_3D':
             view3d = a
             break
-
+            
+    if view3d is None or not view3d.spaces:
+        return None
+        
     r3d = view3d.spaces[0].region_3d
 
-    # Get rotation inputs (assuming values from 0-1)
-    camLookX = mario_inputs.camLookX  # horizontal rotation (around Z)
-    camLookZ = mario_inputs.camLookZ  # vertical rotation (pitch)
+    camLookX = mario_inputs.camLookX 
+    camLookZ = mario_inputs.camLookZ 
+    
     ticks_since_cam_change = tick_count - last_cam_change_tick
     is_cam_change_ok = ticks_since_cam_change > 8
-
+    
     if is_cam_change_ok:
-        if camLookX != 0:  # Dead zone handled in inputs
+        if camLookX != 0: 
             rot_angle = math.radians(360.0 * camLookX)
             rotation = mathutils.Quaternion((0, 0, 1), rot_angle)
             r3d.view_rotation = rotation @ r3d.view_rotation
@@ -201,30 +209,33 @@ def tick_mario(x0, x1):
             zoom_factor = 1.0 + camLookZ
             r3d.view_distance *= zoom_factor
             last_cam_change_tick = tick_count
-
+            
     look_dir = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
     mario_inputs.camLookX = look_dir.x
     mario_inputs.camLookZ = -look_dir.y
 
     sm64.sm64_mario_tick(sm64_mario_id, ct.byref(mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
+    mario_world_x = origin_offset[0] + mario_state.posX / SM64_SCALE_FACTOR
+    mario_world_y = origin_offset[1] - mario_state.posZ / SM64_SCALE_FACTOR
+    mario_world_z = origin_offset[2] + mario_state.posY / SM64_SCALE_FACTOR
+
     if follow_cam:
-        bpy.context.scene.cursor.location = (
-            origin_offset[0] + mario_state.posX / SM64_SCALE_FACTOR + bpy.context.scene.libsm64.camera_shift.x,
-            origin_offset[1] - mario_state.posZ / SM64_SCALE_FACTOR + bpy.context.scene.libsm64.camera_shift.y,
-            origin_offset[2] + mario_state.posY / SM64_SCALE_FACTOR + bpy.context.scene.libsm64.camera_shift.z
-        )
+        r3d.view_location.x = mario_world_x + bpy.context.scene.libsm64.camera_shift.x
+        r3d.view_location.y = mario_world_y + bpy.context.scene.libsm64.camera_shift.y
+        r3d.view_location.z = mario_world_z + bpy.context.scene.libsm64.camera_shift.z
 
-        for region in (r for r in view3d.regions if r.type == 'WINDOW'):
-            with bpy.context.temp_override(area=view3d, region=region):
-                bpy.ops.view3d.view_center_cursor()
+    target_mesh = bpy.data.meshes.get('libsm64_mario_mesh')
+    if target_mesh:
+        if tick_count < 15: 
+            update_mesh_data(target_mesh)
+        else:
+            update_mesh_data_fast(target_mesh)
 
-    if tick_count < 15: # This is enough frames to get Mario to open his eyes, then we'll stop updating uv/color
-        update_mesh_data(bpy.data.meshes['libsm64_mario_mesh'])
-    else:
-        update_mesh_data_fast(bpy.data.meshes['libsm64_mario_mesh'])
+    bpy.data.objects['LibSM64 Mario'].tag_redraw()
 
     tick_count += 1
+    return None
 
 def clamp_bounds(val):
     val = int(val)
@@ -323,10 +334,12 @@ def get_all_surfaces():
 
 def initialize_all_data(texture_buffer):
     size = SM64_TEXTURE_WIDTH, SM64_TEXTURE_HEIGHT
+
     if 'libsm64_mario_texture' in bpy.data.images:
         image = bpy.data.images["libsm64_mario_texture"]
     else:
         image = bpy.data.images.new("libsm64_mario_texture", width=size[0], height=size[1])
+
     pixels = [None] * size[0] * size[1]
     i = 0
     for y in range(size[1]):
@@ -337,6 +350,7 @@ def initialize_all_data(texture_buffer):
             a = float(texture_buffer[i+3]) / 255
             i += 4
             pixels[(y * size[0]) + x] = [r, g, b, a]
+
     pixels = [chan for px in pixels for chan in px]
     image.alpha_mode = 'STRAIGHT'
     image.file_format = 'PNG'
@@ -346,96 +360,140 @@ def initialize_all_data(texture_buffer):
         mat = bpy.data.materials["libsm64_mario_material"]
     else:
         mat = bpy.data.materials.new(name="libsm64_mario_material")
-        mat.use_nodes = True
-        nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
-        nodes.clear()
-        tex_node = nodes.new(type='ShaderNodeTexImage')
-        tex_node.image = bpy.data.images.get("libsm64_mario_texture")
-        color_node = nodes.new(type='ShaderNodeVertexColor')
-        color_node.layer_name = 'Col'
-        color_node.location = [0, 100]
-        mix_node = nodes.new(type='ShaderNodeMix')
-        mix_node.data_type = 'RGBA'
-        mix_node.location = [250, 0]
-        diffuse_node = nodes.new(type='ShaderNodeBsdfDiffuse')
-        diffuse_node.location = [500, 0]
-        out_node = nodes.new(type='ShaderNodeOutputMaterial')
-        out_node.location = [750, 0]
-        links.new(tex_node.outputs[0], mix_node.inputs[7])
-        links.new(tex_node.outputs[1], mix_node.inputs[0])
-        links.new(color_node.outputs[0], mix_node.inputs[6])
-        links.new(mix_node.outputs[2], diffuse_node.inputs[0])
-        links.new(diffuse_node.outputs[0], out_node.inputs[0])
 
-    if not ('libsm64_mario_mesh' in bpy.data.meshes):
-        mesh = bpy.data.meshes.new('libsm64_mario_mesh')
-        mesh.vertex_colors.new()
-        verts = []
-        edges = []
-        faces = []
-        for i in range(SM64_GEO_MAX_TRIANGLES):
-            verts.append((0,0,0))
-            verts.append((0,0,0))
-            verts.append((0,0,0))
-            edges.append((3*i+0, 3*i+1))
-            edges.append((3*i+1, 3*i+2))
-            edges.append((3*i+2, 3*i+0))
-            faces.append((3*i+0, 3*i+1, 3*i+2))
-        mesh.from_pydata(verts, edges, faces)
-        mesh.uv_layers.active = mesh.uv_layers.new(name="uv0")
-        mesh.materials.append(mat)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
 
-def update_mesh_data(mesh: bpy.types.Mesh):
-    global mario_geo
-    vcol = mesh.vertex_colors.active
-    for i in range(mario_geo.numTrianglesUsed):
-        mesh.vertices[3*i+0].co.x = origin_offset[0] + mario_geo.position_data[9*i+0] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+0].co.z = origin_offset[2] + mario_geo.position_data[9*i+1] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+0].co.y = origin_offset[1] - mario_geo.position_data[9*i+2] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+1].co.x = origin_offset[0] + mario_geo.position_data[9*i+3] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+1].co.z = origin_offset[2] + mario_geo.position_data[9*i+4] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+1].co.y = origin_offset[1] - mario_geo.position_data[9*i+5] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+2].co.x = origin_offset[0] + mario_geo.position_data[9*i+6] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+2].co.z = origin_offset[2] + mario_geo.position_data[9*i+7] / SM64_SCALE_FACTOR
-        mesh.vertices[3*i+2].co.y = origin_offset[1] - mario_geo.position_data[9*i+8] / SM64_SCALE_FACTOR
-        mesh.uv_layers.active.data[mesh.loops[3*i+0].index].uv = (mario_geo.uv_data[6*i+0], mario_geo.uv_data[6*i+1])
-        mesh.uv_layers.active.data[mesh.loops[3*i+1].index].uv = (mario_geo.uv_data[6*i+2], mario_geo.uv_data[6*i+3])
-        mesh.uv_layers.active.data[mesh.loops[3*i+2].index].uv = (mario_geo.uv_data[6*i+4], mario_geo.uv_data[6*i+5])
-        vcol.data[3*i+0].color = (
-            mario_geo.color_data[9*i+0],
-            mario_geo.color_data[9*i+1],
-            mario_geo.color_data[9*i+2],
-            1.0
-        )
-        vcol.data[3*i+1].color = (
-            mario_geo.color_data[9*i+3],
-            mario_geo.color_data[9*i+4],
-            mario_geo.color_data[9*i+5],
-            1.0
-        )
-        vcol.data[3*i+2].color = (
-            mario_geo.color_data[9*i+6],
-            mario_geo.color_data[9*i+7],
-            mario_geo.color_data[9*i+8],
-            1.0
-        )
+    tex_node = nodes.new(type='ShaderNodeTexImage')
+    tex_node.image = bpy.data.images.get("libsm64_mario_texture")
+
+    color_node = nodes.new(type='ShaderNodeVertexColor')
+    color_node.layer_name = 'Col'
+
+    mix_node = nodes.new(type='ShaderNodeMix')
+    mix_node.data_type = 'RGBA'
+    mix_node.blend_type = 'MIX'
+
+    diffuse_node = nodes.new(type='ShaderNodeBsdfDiffuse')
+
+    out_node = nodes.new(type='ShaderNodeOutputMaterial')
+
+    links.new(tex_node.outputs['Color'], mix_node.inputs['B'])
+    links.new(tex_node.outputs['Alpha'], mix_node.inputs['Factor'])
+    links.new(color_node.outputs['Color'], mix_node.inputs['A'])
+    links.new(mix_node.outputs['Result'], diffuse_node.inputs['Color'])
+    links.new(diffuse_node.outputs['BSDF'], out_node.inputs['Surface'])
+
+    mesh = bpy.data.meshes.new('libsm64_mario_mesh')
+
+    total_verts = SM64_GEO_MAX_TRIANGLES * 3
+    total_faces = SM64_GEO_MAX_TRIANGLES
+    total_loops = total_faces * 3
+    
+    mesh.vertices.add(total_verts)
+    mesh.loops.add(total_loops)
+    mesh.polygons.add(total_faces)
+    
+    loop_starts = [t * 3 for t in range(total_faces)]
+    loop_totals = [3] * total_faces
+    vertex_indices = []
+    for t in range(total_faces):
+        base = t * 3
+        vertex_indices.extend([base, base + 1, base + 2])
+        
+    mesh.loops.foreach_set("vertex_index", vertex_indices)
+    mesh.polygons.foreach_set("loop_start", loop_starts)
+    mesh.polygons.foreach_set("loop_total", loop_totals)
+    
+    mesh.attributes.new(name="Col", type='BYTE_COLOR', domain='CORNER')
+    mesh.uv_layers.new(name="uv0")
+    mesh.materials.append(mat)
+    
+    mesh.validate(verbose=False)
     mesh.update()
 
+def update_mesh_data(mesh: bpy.types.Mesh):
+    global mario_geo, origin_offset, SM64_SCALE_FACTOR
+    
+    num_tris = mario_geo.numTrianglesUsed
+    num_verts = num_tris * 3
+    
+    coords = [0.0] * (len(mesh.vertices) * 3)
+    for i in range(num_tris):
+        base_sm64 = 9 * i
+        base_blender = 9 * i
+        
+        # Mapping Mario coordinates: X -> X, Z -> Y, Y -> Z
+        coords[base_blender + 0] = origin_offset[0] + mario_geo.position_data[base_sm64 + 0] / SM64_SCALE_FACTOR
+        coords[base_blender + 1] = origin_offset[1] - mario_geo.position_data[base_sm64 + 2] / SM64_SCALE_FACTOR
+        coords[base_blender + 2] = origin_offset[2] + mario_geo.position_data[base_sm64 + 1] / SM64_SCALE_FACTOR
+        
+        coords[base_blender + 3] = origin_offset[0] + mario_geo.position_data[base_sm64 + 3] / SM64_SCALE_FACTOR
+        coords[base_blender + 4] = origin_offset[1] - mario_geo.position_data[base_sm64 + 5] / SM64_SCALE_FACTOR
+        coords[base_blender + 5] = origin_offset[2] + mario_geo.position_data[base_sm64 + 4] / SM64_SCALE_FACTOR
+        
+        coords[base_blender + 6] = origin_offset[0] + mario_geo.position_data[base_sm64 + 6] / SM64_SCALE_FACTOR
+        coords[base_blender + 7] = origin_offset[1] - mario_geo.position_data[base_sm64 + 8] / SM64_SCALE_FACTOR
+        coords[base_blender + 8] = origin_offset[2] + mario_geo.position_data[base_sm64 + 7] / SM64_SCALE_FACTOR
+
+    mesh.vertices.foreach_set("co", coords)
+
+    uv_layer = mesh.uv_layers.active
+    if uv_layer and mario_geo.uv_data:
+        uv_data = [0.0] * (len(mesh.loops) * 2)
+        for i in range(num_tris):
+            base = 6 * i
+            l_idx = 3 * i
+            uv_data[2 * (l_idx + 0): 2 * (l_idx + 0) + 2] = [mario_geo.uv_data[base + 0], mario_geo.uv_data[base + 1]]
+            uv_data[2 * (l_idx + 1): 2 * (l_idx + 1) + 2] = [mario_geo.uv_data[base + 2], mario_geo.uv_data[base + 3]]
+            uv_data[2 * (l_idx + 2): 2 * (l_idx + 2) + 2] = [mario_geo.uv_data[base + 4], mario_geo.uv_data[base + 5]]
+        uv_layer.data.foreach_set("uv", uv_data)
+
+    color_attr = mesh.attributes.get("Col")
+    if color_attr and mario_geo.color_data:
+        colors = [1.0] * (len(mesh.loops) * 4)
+        for i in range(num_tris):
+            base_sm64 = 9 * i
+            
+            c0 = (3 * i + 0) * 4
+            colors[c0:c0+3] = [mario_geo.color_data[base_sm64+0], mario_geo.color_data[base_sm64+1], mario_geo.color_data[base_sm64+2]]
+            
+            c1 = (3 * i + 1) * 4
+            colors[c1:c1+3] = [mario_geo.color_data[base_sm64+3], mario_geo.color_data[base_sm64+4], mario_geo.color_data[base_sm64+5]]
+            
+            c2 = (3 * i + 2) * 4
+            colors[c2:c2+3] = [mario_geo.color_data[base_sm64+6], mario_geo.color_data[base_sm64+7], mario_geo.color_data[base_sm64+8]]
+            
+        color_attr.data.foreach_set("color", colors)
+
+    mesh.validate(verbose=False)
+    mesh.update()
+
+
 def update_mesh_data_fast(mesh: bpy.types.Mesh):
-    global mario_geo, origin_offset
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bm.verts.ensure_lookup_table()
-    for i in range(mario_geo.numTrianglesUsed):
-        bm.verts[3*i+0].co.x = origin_offset[0] + mario_geo.position_data[9*i+0] / SM64_SCALE_FACTOR
-        bm.verts[3*i+0].co.z = origin_offset[2] + mario_geo.position_data[9*i+1] / SM64_SCALE_FACTOR
-        bm.verts[3*i+0].co.y = origin_offset[1] - mario_geo.position_data[9*i+2] / SM64_SCALE_FACTOR
-        bm.verts[3*i+1].co.x = origin_offset[0] + mario_geo.position_data[9*i+3] / SM64_SCALE_FACTOR
-        bm.verts[3*i+1].co.z = origin_offset[2] + mario_geo.position_data[9*i+4] / SM64_SCALE_FACTOR
-        bm.verts[3*i+1].co.y = origin_offset[1] - mario_geo.position_data[9*i+5] / SM64_SCALE_FACTOR
-        bm.verts[3*i+2].co.x = origin_offset[0] + mario_geo.position_data[9*i+6] / SM64_SCALE_FACTOR
-        bm.verts[3*i+2].co.z = origin_offset[2] + mario_geo.position_data[9*i+7] / SM64_SCALE_FACTOR
-        bm.verts[3*i+2].co.y = origin_offset[1] - mario_geo.position_data[9*i+8] / SM64_SCALE_FACTOR
-    bm.to_mesh(mesh)
-    bm.free()
+    global mario_geo, origin_offset, SM64_SCALE_FACTOR
+    
+    num_tris = mario_geo.numTrianglesUsed
+    coords = [0.0] * (len(mesh.vertices) * 3)
+    
+    for i in range(num_tris):
+        base_sm64 = 9 * i
+        base_blender = 9 * i
+        
+        coords[base_blender + 0] = origin_offset[0] + mario_geo.position_data[base_sm64 + 0] / SM64_SCALE_FACTOR
+        coords[base_blender + 1] = origin_offset[1] - mario_geo.position_data[base_sm64 + 2] / SM64_SCALE_FACTOR
+        coords[base_blender + 2] = origin_offset[2] + mario_geo.position_data[base_sm64 + 1] / SM64_SCALE_FACTOR
+        
+        coords[base_blender + 3] = origin_offset[0] + mario_geo.position_data[base_sm64 + 3] / SM64_SCALE_FACTOR
+        coords[base_blender + 4] = origin_offset[1] - mario_geo.position_data[base_sm64 + 5] / SM64_SCALE_FACTOR
+        coords[base_blender + 5] = origin_offset[2] + mario_geo.position_data[base_sm64 + 4] / SM64_SCALE_FACTOR
+        
+        coords[base_blender + 6] = origin_offset[0] + mario_geo.position_data[base_sm64 + 6] / SM64_SCALE_FACTOR
+        coords[base_blender + 7] = origin_offset[1] - mario_geo.position_data[base_sm64 + 8] / SM64_SCALE_FACTOR
+        coords[base_blender + 8] = origin_offset[2] + mario_geo.position_data[base_sm64 + 7] / SM64_SCALE_FACTOR
+
+    mesh.vertices.foreach_set("co", coords)
+    mesh.validate(verbose=False)
+    mesh.update()
