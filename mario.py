@@ -79,6 +79,7 @@ follow_cam = False
 tick_count = 0
 last_cam_change_tick = -30
 
+
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, original_cursor_pos, follow_cam
 
@@ -193,26 +194,22 @@ def tick_mario(scene, depsgraph=None):
         
     r3d = view3d.spaces[0].region_3d
 
-    camLookX = mario_inputs.camLookX 
-    camLookZ = mario_inputs.camLookZ 
+    cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
+    cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
+
+    mario_world_pos = mathutils.Vector((
+        origin_offset[0] + mario_state.posX / SM64_SCALE_FACTOR,
+        origin_offset[1] - mario_state.posZ / SM64_SCALE_FACTOR,
+        origin_offset[2] + mario_state.posY / SM64_SCALE_FACTOR
+    ))
+
+    delta_vec = cam_world_pos - mario_world_pos
     
-    ticks_since_cam_change = tick_count - last_cam_change_tick
-    is_cam_change_ok = ticks_since_cam_change > 8
-    
-    if is_cam_change_ok:
-        if camLookX != 0: 
-            rot_angle = math.radians(360.0 * camLookX)
-            rotation = mathutils.Quaternion((0, 0, 1), rot_angle)
-            r3d.view_rotation = rotation @ r3d.view_rotation
-            last_cam_change_tick = tick_count
-        elif camLookZ != 0:
-            zoom_factor = 1.0 + camLookZ
-            r3d.view_distance *= zoom_factor
-            last_cam_change_tick = tick_count
-            
-    look_dir = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
-    mario_inputs.camLookX = look_dir.x
-    mario_inputs.camLookZ = -look_dir.y
+    if delta_vec.length > 0.001:
+        delta_vec.normalize()
+
+    mario_inputs.camLookX = delta_vec.x
+    mario_inputs.camLookZ = -delta_vec.y  # Depth alignment maps safely into libsm64 Z space
 
     sm64.sm64_mario_tick(sm64_mario_id, ct.byref(mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
@@ -231,8 +228,6 @@ def tick_mario(scene, depsgraph=None):
             update_mesh_data(target_mesh)
         else:
             update_mesh_data_fast(target_mesh)
-
-    bpy.data.objects['LibSM64 Mario'].tag_redraw()
 
     tick_count += 1
     return None
