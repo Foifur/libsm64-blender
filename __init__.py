@@ -13,10 +13,17 @@ import bpy
 import platform
 from . mario import insert_mario
 
+def update_follow_cam(self, context):
+    mario.follow_cam = self.camera_follow
+
+    if hasattr(context.scene, 'libsm64'):
+        follow_cam = context.scene.libsm64.camera_follow
+
 class LibSm64Properties(bpy.types.PropertyGroup):
     camera_follow : bpy.props.BoolProperty (
         name="Follow Mario with 3D cursor + camera",
-        default=True
+        default=True,
+        update=update_follow_cam
     )
     camera_shift : bpy.props.FloatVectorProperty (
         name='Camera Offset',
