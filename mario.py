@@ -167,10 +167,10 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     mesh_vertex_offsets.clear()
     last_known_mario_mode = 'OBJECT'
 
-    if bpy.app.timers.is_registered(mario_mode_watcher_timer):
-        bpy.app.timers.unregister(mario_mode_watcher_timer)
-        
-    bpy.app.timers.register(mario_mode_watcher_timer)
+    bpy.app.handlers.depsgraph_update_post[:] = [
+        h for h in bpy.app.handlers.depsgraph_update_post if getattr(h, '__name__', '') != 'on_mode_change'
+    ]
+    bpy.app.handlers.depsgraph_update_post.append(mario_mode_property_update_callback)
 
     tick_count = 0
 
@@ -432,32 +432,7 @@ def update_mesh_data(mesh: bpy.types.Mesh):
     num_tris = mario_geo.numTrianglesUsed
     num_verts = num_tris * 3
     
-    coords = [0.0] * (len(mesh.vertices) * 3)
-    for i in range(num_tris):
-        base_sm64 = 9 * i
-        base_blender = 9 * i
-        
-        # Mapping Mario coordinates: X -> X, Z -> Y, Y -> Z
-        coords[base_blender + 0] = origin_offset[0] + mario_geo.position_data[base_sm64 + 0] / SM64_SCALE_FACTOR
-        coords[base_blender + 1] = origin_offset[1] - mario_geo.position_data[base_sm64 + 2] / SM64_SCALE_FACTOR
-        coords[base_blender + 2] = origin_offset[2] + mario_geo.position_data[base_sm64 + 1] / SM64_SCALE_FACTOR
-        
-        coords[base_blender + 3] = origin_offset[0] + mario_geo.position_data[base_sm64 + 3] / SM64_SCALE_FACTOR
-        coords[base_blender + 4] = origin_offset[1] - mario_geo.position_data[base_sm64 + 5] / SM64_SCALE_FACTOR
-        coords[base_blender + 5] = origin_offset[2] + mario_geo.position_data[base_sm64 + 4] / SM64_SCALE_FACTOR
-        
-        coords[base_blender + 6] = origin_offset[0] + mario_geo.position_data[base_sm64 + 6] / SM64_SCALE_FACTOR
-        coords[base_blender + 7] = origin_offset[1] - mario_geo.position_data[base_sm64 + 8] / SM64_SCALE_FACTOR
-        coords[base_blender + 8] = origin_offset[2] + mario_geo.position_data[base_sm64 + 7] / SM64_SCALE_FACTOR
-
-        for v in range(3):
-            v_idx = (i * 3) + v
-            if v_idx in mesh_vertex_offsets:
-                off_x, off_y, off_z = mesh_vertex_offsets[v_idx]
-                coords[(i * 9) + (v * 3) + 0] += off_x
-                coords[(i * 9) + (v * 3) + 1] += off_y
-                coords[(i * 9) + (v * 3) + 2] += off_z
-
+    coords = get_mesh_coords(mesh)
     mesh.vertices.foreach_set("co", coords)
 
     uv_layer = mesh.uv_layers.active
@@ -493,47 +468,79 @@ def update_mesh_data(mesh: bpy.types.Mesh):
 
 
 def update_mesh_data_fast(mesh: bpy.types.Mesh):
-    global mario_geo, origin_offset, SM64_SCALE_FACTOR, mesh_vertex_offsets
-    
-    num_tris = mario_geo.numTrianglesUsed
-    coords = [0.0] * (len(mesh.vertices) * 3)
-    
-    for i in range(num_tris):
-        base_sm64 = 9 * i
-        base_blender = 9 * i
-        
-        coords[base_blender + 0] = origin_offset[0] + mario_geo.position_data[base_sm64 + 0] / SM64_SCALE_FACTOR
-        coords[base_blender + 1] = origin_offset[1] - mario_geo.position_data[base_sm64 + 2] / SM64_SCALE_FACTOR
-        coords[base_blender + 2] = origin_offset[2] + mario_geo.position_data[base_sm64 + 1] / SM64_SCALE_FACTOR
-        
-        coords[base_blender + 3] = origin_offset[0] + mario_geo.position_data[base_sm64 + 3] / SM64_SCALE_FACTOR
-        coords[base_blender + 4] = origin_offset[1] - mario_geo.position_data[base_sm64 + 5] / SM64_SCALE_FACTOR
-        coords[base_blender + 5] = origin_offset[2] + mario_geo.position_data[base_sm64 + 4] / SM64_SCALE_FACTOR
-        
-        coords[base_blender + 6] = origin_offset[0] + mario_geo.position_data[base_sm64 + 6] / SM64_SCALE_FACTOR
-        coords[base_blender + 7] = origin_offset[1] - mario_geo.position_data[base_sm64 + 8] / SM64_SCALE_FACTOR
-        coords[base_blender + 8] = origin_offset[2] + mario_geo.position_data[base_sm64 + 7] / SM64_SCALE_FACTOR
+    global mario_geo, mario_state, origin_offset, SM64_SCALE_FACTOR, mesh_vertex_offsets
 
-        for v in range(3):
-            v_idx = (i * 3) + v
-            if v_idx in mesh_vertex_offsets:
-                off_x, off_y, off_z = mesh_vertex_offsets[v_idx]
-                coords[(i * 9) + (v * 3) + 0] += off_x
-                coords[(i * 9) + (v * 3) + 1] += off_y
-                coords[(i * 9) + (v * 3) + 2] += off_z
+    mario_obj = bpy.data.objects.get('LibSM64 Mario')
+    if mario_obj and mario_obj.mode == 'EDIT':
+        return
+    
+    coords = get_mesh_coords(mesh)
 
     mesh.vertices.foreach_set("co", coords)
     mesh.validate(verbose=False)
     mesh.update()
 
-def mario_mode_watcher_timer():
-    global mario_geo, SM64_SCALE_FACTOR, origin_offset, mesh_vertex_offset, last_known_mario_mode
+def get_mesh_coords(mesh: bpy.types.Mesh):
+    num_tris = mario_geo.numTrianglesUsed
+    if num_tris == 0 or len(mesh.vertices) == 0:
+        return
+
+    coords = [0.0] * (len(mesh.vertices) * 3)
+    for i in range(num_tris):
+            base_sm64 = 9 * i
+            base_blender = 9 * i
+            
+            sim_v = []
+            for v in range(3):
+                s_idx = base_sm64 + (v * 3)
+                sim_v.append(mathutils.Vector((
+                    origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
+                    origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
+                    origin_offset[2] + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
+                )))
+                
+            edge1, edge2 = sim_v[1] - sim_v[0], sim_v[2] - sim_v[0]
+            valid_basis = False
+            
+            if edge1.length > 0.0001 and edge2.length > 0.0001:
+                v_tangent = edge1.normalized()
+                cross_prod = edge1.cross(edge2)
+                if cross_prod.length > 0.0001:
+                    v_normal = cross_prod.normalized()
+                    v_bitangent = v_normal.cross(v_tangent).normalized()
+                    tri_basis = mathutils.Matrix((v_tangent, v_bitangent, v_normal)).transposed()
+                    valid_basis = True
+                    
+            for v in range(3):
+                vert_number = (i * 3) + v
+                final_pos = sim_v[v].copy()
+                
+                if vert_number in mesh_vertex_offsets:
+                    off_x, off_y, off_z, is_local = mesh_vertex_offsets[vert_number]
+                    local_delta_vec = mathutils.Vector((off_x, off_y, off_z))
+                    
+                    if is_local == 1 and valid_basis:
+                        final_pos += tri_basis @ local_delta_vec
+                    else:
+                        final_pos += local_delta_vec
+                
+                b_sub = base_blender + (v * 3)
+                coords[b_sub : b_sub + 3] = final_pos
+
+    return coords
+
+
+def on_mode_change(scene=None):
+    global mario_geo, mario_state, SM64_SCALE_FACTOR, origin_offset, mesh_vertex_offset, last_known_mario_mode
     
     mario_obj = bpy.data.objects.get('LibSM64 Mario')
     if not mario_obj:
         return None
-        
+
     current_mode = mario_obj.mode
+
+    if current_mode == last_known_mario_mode:
+        return
 
     if current_mode != last_known_mario_mode:
         
@@ -566,9 +573,33 @@ def mario_mode_watcher_timer():
                     base_sm64 = 9 * i
                     base_blender = 9 * i
                     
+                    sim_v = []
                     for v in range(3):
                         v_idx = base_blender + (v * 3)
                         s_idx = base_sm64 + (v * 3)
+                        sim_v.append(mathutils.Vector((
+                            origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
+                            origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
+                            origin_offset[2] + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
+                        )))
+                    
+                    edge1 = sim_v[1] - sim_v[0]
+                    edge2 = sim_v[2] - sim_v[0]
+                    
+                    valid_basis = False
+                    if edge1.length > 0.0001 and edge2.length > 0.0001:
+                        v_tangent = edge1.normalized()
+                        cross_prod = edge1.cross(edge2)
+                        if cross_prod.length > 0.0001:
+                            v_normal = cross_prod.normalized()
+                            v_bitangent = v_normal.cross(v_tangent).normalized()
+
+                            tri_basis_inv = mathutils.Matrix((v_tangent, v_bitangent, v_normal))
+                            valid_basis = True
+                    
+                    for v in range(3):
+                        v_idx = base_blender + (v * 3)
+                        vert_number = (i * 3) + v
                         
                         sim_x = origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR
                         sim_y = origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR
@@ -578,8 +609,11 @@ def mario_mode_watcher_timer():
                         offset_y = current_coords[v_idx + 1] - sim_y
                         offset_z = current_coords[v_idx + 2] - sim_z
                         
-                        vert_number = (i * 3) + v
-                        mesh_vertex_offsets[vert_number] = (offset_x, offset_y, offset_z)
+                        if valid_basis:
+                            local_delta = tri_basis_inv @ world_delta
+                            mesh_vertex_offsets[vert_number] = (local_delta.x, local_delta.y, local_delta.z, 1)
+                        else:
+                            mesh_vertex_offsets[vert_number] = (world_delta.x, world_delta.y, world_delta.z, 0)
 
             if screen_ctx and not screen_ctx.is_animation_playing:
                 bpy.ops.screen.animation_play()
@@ -590,4 +624,5 @@ def mario_mode_watcher_timer():
 
         last_known_mario_mode = current_mode
 
-    return 0.03
+def mario_mode_property_update_callback(self, context):
+    bpy.app.timers.register(on_mode_change, first_interval=0.0)
