@@ -9,9 +9,23 @@ bl_info = {
     "category" : "Generic"
 }
 
+import os
+import sys
+
+addon_dir = os.path.dirname(os.path.realpath(__file__))
+libs_path = os.path.join(addon_dir, "lib")
+
+if libs_path not in sys.path:
+    sys.path.insert(0, libs_path)
+
+os.environ["PYSDL2_DLL_PATH"] = libs_path
+
 import bpy
 import platform
 from . mario import insert_mario
+from . mario import mario_inputs
+import ctypes
+import sdl2 as sdl
 
 def update_follow_cam(self, context):
     mario.follow_cam = self.camera_follow
@@ -76,6 +90,7 @@ class Main_PT_Panel(bpy.types.Panel):
         col.prop(scene.libsm64, "camera_shift")
         col.operator(ControlMario_OT_Operator.bl_idname, text='Control Mario with keyboard')
         col.label(text="WASD + JKL to move. ESC to stop.")
+        col.operator("object.sdl_modal", text="Connect Controller")
 
 class InsertMario_OT_Operator(bpy.types.Operator):
     bl_idname = "view3d.libsm64_insert_mario"
@@ -115,6 +130,102 @@ class ControlMario_OT_Operator(bpy.types.Operator):
 
         return {'RUNNING_MODAL'}
 
+class OBJECT_OT_sdl_modal(bpy.types.Operator):
+    """Read SDL2 Controller inputs inside Blender"""
+    bl_idname = "object.sdl_modal"
+    bl_label = "Start SDL2 Controller Reader"
+    
+    _timer = None
+    _joystick = None
+    _event = None
+
+    def modal(self, context, event):
+        # Stop tracking instantly if the user presses ESC inside the Blender Viewport
+        if event.type in {'ESC'}:
+            self.cancel(context)
+            return {'CANCELLED'}
+
+        if self._event:
+            while sdl.SDL_PollEvent(ctypes.byref(self._event)) != 0:
+
+                # Handle Axis Motion
+                if self._event.type == sdl.SDL_JOYAXISMOTION:
+                    axis_num = self._event.jaxis.axis
+                    raw_val = float(self._event.jaxis.value)
+                    print(f"Axis {axis_num}: {raw_val}")
+
+                    scaled_val = raw_val / 512.0
+
+                    if abs(scaled_val) < 8.0:
+                        scaled_val = 0.0
+
+                    normalized_val = scaled_val / 64.0
+
+                    if axis_num == 0:
+                        mario_inputs.stickX = -normalized_val
+                    elif axis_num == 1:
+                        mario_inputs.stickY = -normalized_val
+
+                # Handle Button Presses
+                elif self._event.type == sdl.SDL_JOYBUTTONDOWN:
+                    btn_num = self._event.jbutton.button
+                    print(f"Button {btn_num} Pressed")
+
+                    match btn_num:
+                        case 0:
+                            mario_inputs.buttonA = True
+                        case 1:
+                            mario_inputs.buttonB = True
+                        case 2:
+                            mario_inputs.buttonZ = True
+                    
+                # Handle Button Releases
+                elif self._event.type == sdl.SDL_JOYBUTTONUP:
+                    btn_num = self._event.jbutton.button
+                    print(f"Button {btn_num} Released")
+
+                    match btn_num:
+                        case 0:
+                            mario_inputs.buttonA = False
+                        case 1:
+                            mario_inputs.buttonB = False
+                        case 2:
+                            mario_inputs.buttonZ = False
+
+        # Pass event through so normal Blender navigation (mouse pan, zoom) still works
+        return {'PASS_THROUGH'}
+
+    def execute(self, context):
+        sdl.SDL_Init(sdl.SDL_INIT_JOYSTICK)
+        
+        # Check for connected physical hardware
+        if sdl.SDL_NumJoysticks() > 0:
+            self._joystick = sdl.SDL_JoystickOpen(0)
+            print(f"Connected Controller: {sdl.SDL_JoystickName(self._joystick)}")
+        else:
+            self.report({'WARNING'}, "No controller detected! Connect a device and retry.")
+            return {'CANCELLED'}
+
+        self._event = sdl.SDL_Event()
+        
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        
+        print("SDL2 Controller Reader Started. Press 'ESC' in the 3D Viewport to stop.")
+        return {'RUNNING_MODAL'}
+
+    def cancel(self, context):
+        wm = context.window_manager
+        if self._timer:
+            wm.event_timer_remove(self._timer)
+
+        if self._joystick:
+            sdl.SDL_JoystickClose(self._joystick)
+        sdl.SDL_Quit()
+        
+        print("SDL2 Controller Reader Stopped.")
+
 config = {
     'keyboard_control': False
 }
@@ -153,7 +264,8 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     LibSm64Preferences,
     Main_PT_Panel,
     InsertMario_OT_Operator,
-    ControlMario_OT_Operator
+    ControlMario_OT_Operator,
+    OBJECT_OT_sdl_modal
 ))
 
 def register():

@@ -8,9 +8,7 @@ from typing import cast, List
 from . collision_types import COLLISION_TYPES
 
 if platform.system() == 'Windows':
-    from . input_reader_win import sample_input_reader, start_input_reader, stop_input_reader
-else:
-    from . input_reader import sample_input_reader, start_input_reader, stop_input_reader
+    from . input_reader import sample_input_reader
 
 SM64_TEXTURE_WIDTH = 64 * 11
 SM64_TEXTURE_HEIGHT = 64
@@ -111,7 +109,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         bpy.data.objects['LibSM64 Mario'].select_set(True) # Blender 2.8x
         bpy.ops.object.delete()
 
-    stop_input_reader()
+    #stop_input_reader()
 
     if sm64 != None:
         try:
@@ -156,7 +154,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     mario_obj = bpy.data.objects.new('LibSM64 Mario', bpy.data.meshes['libsm64_mario_mesh'])
     bpy.context.scene.collection.objects.link(mario_obj)
 
-    start_input_reader()
+    #start_input_reader()
 
     original_fps = bpy.context.scene.render.fps
     bpy.context.scene.render.fps = 30
@@ -189,7 +187,7 @@ def stop_tick_mario():
     sm64_mario_id = -1
     sm64.sm64_global_terminate()
     sm64 = None
-    stop_input_reader()
+    #stop_input_reader()
 
 def tick_mario(scene, depsgraph=None):
     global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
@@ -543,7 +541,6 @@ def on_mode_change(scene=None):
         return
 
     if current_mode != last_known_mario_mode:
-        
         screen_ctx = None
         for win in bpy.context.window_manager.windows:
             if win.screen:
@@ -552,7 +549,6 @@ def on_mode_change(scene=None):
 
         if last_known_mario_mode == 'OBJECT' and current_mode == 'EDIT':
             if screen_ctx and screen_ctx.is_animation_playing:
-                # Force-cancel the active timeline playback loop 
                 bpy.ops.screen.animation_cancel(restore_frame=False)
                 print("Pausing Animation")
 
@@ -564,7 +560,6 @@ def on_mode_change(scene=None):
         elif last_known_mario_mode == 'EDIT' and current_mode == 'OBJECT':
             if mario_geo:
                 mesh = mario_obj.data
-                
                 num_tris = mario_geo.numTrianglesUsed
                 current_coords = [0.0] * (len(mesh.vertices) * 3)
                 mesh.vertices.foreach_get("co", current_coords)
@@ -575,7 +570,6 @@ def on_mode_change(scene=None):
                     
                     sim_v = []
                     for v in range(3):
-                        v_idx = base_blender + (v * 3)
                         s_idx = base_sm64 + (v * 3)
                         sim_v.append(mathutils.Vector((
                             origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
@@ -601,13 +595,12 @@ def on_mode_change(scene=None):
                         v_idx = base_blender + (v * 3)
                         vert_number = (i * 3) + v
                         
-                        sim_x = origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR
-                        sim_y = origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR
-                        sim_z = origin_offset[2] + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
-                        
-                        offset_x = current_coords[v_idx + 0] - sim_x
-                        offset_y = current_coords[v_idx + 1] - sim_y
-                        offset_z = current_coords[v_idx + 2] - sim_z
+                        edited_pos = mathutils.Vector((
+                            current_coords[v_idx + 0], 
+                            current_coords[v_idx + 1], 
+                            current_coords[v_idx + 2]
+                        ))
+                        world_delta = edited_pos - sim_v[v]
                         
                         if valid_basis:
                             local_delta = tri_basis_inv @ world_delta
