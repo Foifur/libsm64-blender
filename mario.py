@@ -46,7 +46,14 @@ class SM64MarioState(ct.Structure):
         ('posX', ct.c_float), ('posY', ct.c_float), ('posZ', ct.c_float),
         ('velX', ct.c_float), ('velY', ct.c_float), ('velZ', ct.c_float),
         ('faceAngle', ct.c_float),
+        ('forwardVelocity', ct.c_float),
         ('health', ct.c_int16),
+        ('action', ct.c_uint32),
+        ('animID', ct.c_int32),
+        ('animFrame', ct.c_int16),
+        ('flags', ct.c_uint32),
+        ('particleFlages', ct.c_uint32),
+        ('invicTimer', ct.c_int16),        
     ]
 
 class SM64MarioGeometryBuffers(ct.Structure):
@@ -122,7 +129,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     dll_path = os.path.join(this_path, 'lib', dll_name)
     sm64 = ct.cdll.LoadLibrary(dll_path)
 
-    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte), ct.c_char_p ]
+    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
     sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(SM64Surface), ct.c_uint32 ]
     sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
     sm64.sm64_mario_create.restype = ct.c_int32
@@ -137,7 +144,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         rom_bytes = bytearray(file.read())
         rom_chars = ct.c_char * len(rom_bytes)
         texture_buff = (ct.c_ubyte * (4 * SM64_TEXTURE_WIDTH * SM64_TEXTURE_HEIGHT))()
-        sm64.sm64_global_init(rom_chars.from_buffer(rom_bytes), texture_buff, None)
+        sm64.sm64_global_init(rom_chars.from_buffer(rom_bytes), texture_buff)
         initialize_all_data(texture_buff)
 
     (surface_array, surface_array_len) = get_surface_array_from_scene()
