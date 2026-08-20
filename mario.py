@@ -29,9 +29,9 @@ class SM64Surface(ct.Structure):
         ('surftype', ct.c_int16),
         ('force', ct.c_int16),
         ('terrain', ct.c_uint16),
-        ('v0x', ct.c_int16), ('v0y', ct.c_int16), ('v0z', ct.c_int16),
-        ('v1x', ct.c_int16), ('v1y', ct.c_int16), ('v1z', ct.c_int16),
-        ('v2x', ct.c_int16), ('v2y', ct.c_int16), ('v2z', ct.c_int16)
+        ('v0x', ct.c_int32), ('v0y', ct.c_int32), ('v0z', ct.c_int32),
+        ('v1x', ct.c_int32), ('v1y', ct.c_int32), ('v1z', ct.c_int32),
+        ('v2x', ct.c_int32), ('v2y', ct.c_int32), ('v2z', ct.c_int32)
     ]
 
 class SM64MarioInputs(ct.Structure):
@@ -124,7 +124,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte), ct.c_char_p ]
     sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(SM64Surface), ct.c_uint32 ]
-    sm64.sm64_mario_create.argtypes = [ ct.c_int16, ct.c_int16, ct.c_int16 ]
+    sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
     sm64.sm64_mario_create.restype = ct.c_int32
     sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(SM64MarioInputs), ct.POINTER(SM64MarioState), ct.POINTER(SM64MarioGeometryBuffers) ]
 
