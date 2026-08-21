@@ -11,6 +11,12 @@ bl_info = {
 
 import os
 import sys
+import bpy
+import platform
+from .mario import insert_mario
+from .mario import mario_inputs
+from .mario import follow_cam
+import ctypes
 
 addon_dir = os.path.dirname(os.path.realpath(__file__))
 libs_path = os.path.join(addon_dir, "lib")
@@ -20,50 +26,46 @@ if libs_path not in sys.path:
 
 os.environ["PYSDL2_DLL_PATH"] = libs_path
 
-import bpy
-import platform
-from . mario import insert_mario
-from . mario import mario_inputs
-import ctypes
-import sdl2 as sdl
+from .lib import sdl2 as sdl
 
 def update_follow_cam(self, context):
-    mario.follow_cam = self.camera_follow
+    global follow_cam
+    follow_cam = self.camera_follow
 
     if hasattr(context.scene, 'libsm64'):
         follow_cam = context.scene.libsm64.camera_follow
 
 class LibSm64Properties(bpy.types.PropertyGroup):
-    camera_follow : bpy.props.BoolProperty (
+    camera_follow: bpy.props.BoolProperty (
         name="Follow Mario with 3D cursor + camera",
         default=True,
         update=update_follow_cam
-    )
-    camera_shift : bpy.props.FloatVectorProperty (
+    ) # type: ignore
+    camera_shift: bpy.props.FloatVectorProperty (
         name='Camera Offset',
         description='Camera Offset from Mario Origin.',
         default=(0.0, 0.0, 1.0),
         soft_min =-10.0,
-        soft_max=10.0,
+        soft_max = 10.0,
         step=10,
         precision=3,
         subtype='XYZ',
         unit='LENGTH',
         size=3
-    )
-    mario_scale : bpy.props.FloatProperty(
+    ) # type: ignore
+    mario_scale: bpy.props.FloatProperty(
         name="Blender to SM64 Scale",
         default=100
-    )
+    ) # type: ignore
 
 class LibSm64Preferences(bpy.types.AddonPreferences):
     bl_idname = __name__
-    rom_path : bpy.props.StringProperty(
+    rom_path: bpy.props.StringProperty(
         name="Path",
         description="Path to an unmodified US SM64 ROM",
         subtype='FILE_PATH',
         default=('c:\\sm64.us.z64' if platform.system() == 'Windows' else '~/sm64.us.z64')
-    )
+    ) # type: ignore
     def draw(self, context):
         layout = self.layout
         col = layout.column()
@@ -130,7 +132,7 @@ class ControlMario_OT_Operator(bpy.types.Operator):
 
         return {'RUNNING_MODAL'}
 
-class OBJECT_OT_sdl_modal(bpy.types.Operator):
+class ConnectController_OT_Operator(bpy.types.Operator):
     """Read SDL2 Controller inputs inside Blender"""
     bl_idname = "object.sdl_modal"
     bl_label = "Start SDL2 Controller Reader"
@@ -265,7 +267,7 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     Main_PT_Panel,
     InsertMario_OT_Operator,
     ControlMario_OT_Operator,
-    OBJECT_OT_sdl_modal
+    ConnectController_OT_Operator
 ))
 
 def register():
