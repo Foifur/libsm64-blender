@@ -15,7 +15,8 @@ import bpy
 import platform
 from .mario import insert_mario
 from .mario import mario_inputs
-from .mario import follow_cam
+from . import mario
+from .audio_types import MusicSeqId
 import ctypes
 
 addon_dir = os.path.dirname(os.path.realpath(__file__))
@@ -28,12 +29,30 @@ os.environ["PYSDL2_DLL_PATH"] = libs_path
 
 from .lib import sdl2 as sdl
 
+def make_enum_items():
+    items = []
+    for member in MusicSeqId:
+        identifier = member.name
+        name = member.name.replace("SEQ_", "").replace("_", " ").title()
+        description = f"Sequence ID: {hex(member.value)}"
+
+        items.append((identifier, name, description, "", member.value))
+    return items
+
+def update_music_selection(self, context):
+    selected_string = context.scene.music_dropdown
+    enum_member = MusicSeqId[selected_string]
+    mario.music_select = enum_member.value
+
+bpy.types.Scene.music_dropdown = bpy.props.EnumProperty(
+    name="Music Select",
+    items=make_enum_items(),
+    update=update_music_selection,
+    default=MusicSeqId.SEQ_RANDOM_MUSIC.name
+)
+
 def update_follow_cam(self, context):
     global follow_cam
-    follow_cam = self.camera_follow
-
-    if hasattr(context.scene, 'libsm64'):
-        follow_cam = context.scene.libsm64.camera_follow
     mario.follow_cam = self.camera_follow
 
 class LibSm64Properties(bpy.types.PropertyGroup):
@@ -89,6 +108,7 @@ class Main_PT_Panel(bpy.types.Panel):
         prop_split(col, scene.libsm64, "mario_scale", "Blender to SM64 Scale")
         col.prop(preferences, "rom_path")
         col.prop(scene.libsm64, "camera_follow")
+        layout.prop(scene, "music_dropdown", text = "Choose")
         col.operator(InsertMario_OT_Operator.bl_idname, text='Insert Mario')
         col.prop(scene.libsm64, "camera_shift")
         col.operator(ControlMario_OT_Operator.bl_idname, text='Control Mario with keyboard')

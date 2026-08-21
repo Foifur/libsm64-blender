@@ -6,6 +6,9 @@ import time
 import math
 import mathutils
 import copy
+import random
+from . import audio_types
+from .audio_types import MusicSeqId
 from typing import cast, List
 from . import audio_stream as audio
 from . collision_types import COLLISION_TYPES
@@ -91,11 +94,12 @@ follow_cam = False
 tick_count = 0
 last_cam_change_tick = -30
 
+music_select = MusicSeqId.SEQ_RANDOM_MUSIC
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam
-    global last_known_mario_mode
     global last_known_mario_mode, last_time
+    global music_select
 
     SM64_SCALE_FACTOR = scale
 
@@ -137,9 +141,8 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_audio_init.restype = None
     sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
     sm64.sm64_audio_tick.restype = ct.c_uint32
-
-    with open(dll_path, 'rb') as f:
-        rom_data = f.read()
+    sm64.sm64_play_music.argtypes = [ct.c_uint8, ct.c_uint16, ct.c_uint16]
+    sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
 
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
@@ -174,6 +177,11 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     bpy.app.handlers.frame_change_pre.append(tick_mario)
 
     audio.start_audio_stream(sm64)
+
+    seqArgs = 0x80 | + (random.choice(list(MusicSeqId)) if music_select == MusicSeqId.SEQ_RANDOM_MUSIC else music_select)
+    sm64.sm64_play_music(0, seqArgs, 0)
+
+    sm64.sm64_play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
 
     global mesh_vertex_offsets
     mesh_vertex_offsets.clear()
@@ -214,10 +222,9 @@ def tick_mario(scene, depsgraph=None):
     
     if not ('LibSM64 Mario' in bpy.data.objects):
         stop_tick_mario()
+        audio.stop_audio_stream()
         return 0
 
-    sample_input_reader(mario_inputs)
-    
     view3d = None
     for a in bpy.context.window.screen.areas:
         if a.type == 'VIEW_3D':
@@ -228,7 +235,6 @@ def tick_mario(scene, depsgraph=None):
         return None
         
     r3d = view3d.spaces[0].region_3d
-
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
     cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
 
