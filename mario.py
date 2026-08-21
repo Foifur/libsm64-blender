@@ -7,6 +7,7 @@ import math
 import mathutils
 import copy
 import random
+from enum import IntEnum
 from . import audio_types
 from .audio_types import MusicSeqId
 from typing import cast, List
@@ -28,6 +29,14 @@ is_handling_mode_change = False
 
 last_known_mario_mode = "OBJECT"
 mesh_vertex_offsets = {}
+
+MARIO_NORMAL_CAP        = 0x00000001
+MARIO_VANISH_CAP        = 0x00000002
+MARIO_METAL_CAP         = 0x00000004
+MARIO_WING_CAP          = 0x00000008
+
+MARIO_SPECIAL_CAPS = (MARIO_VANISH_CAP | MARIO_METAL_CAP | MARIO_WING_CAP)
+MARIO_CAPS = (MARIO_NORMAL_CAP | MARIO_SPECIAL_CAPS)
 
 class SM64Surface(ct.Structure):
     _fields_ = [
@@ -183,6 +192,10 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     sm64.sm64_play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
 
+    sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
+    #sm64.sm64_mario_interact_cap(sm64_mario_id, MARIO_WING_CAP, 0, 1)
+
+
     global mesh_vertex_offsets
     mesh_vertex_offsets.clear()
     last_known_mario_mode = 'OBJECT'
@@ -197,6 +210,9 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     last_time = time.time()
 
     return None
+
+def add_cap(capId):
+    sm64.sm64_mario_interact_cap(sm64_mario_id, capId, 0, 1)
 
 def stop_tick_mario():
     global sm64, sm64_mario_id, original_fps
@@ -258,6 +274,8 @@ def tick_mario(scene, depsgraph=None):
     
     r3d.view_rotation = new_euler.to_quaternion()
 
+    sample_input_reader(mario_inputs)
+
     final_mario_inputs = copy.copy(mario_inputs)
     final_mario_inputs.camLookX = delta_vec.x
     final_mario_inputs.camLookZ = -delta_vec.y
@@ -278,7 +296,10 @@ def tick_mario(scene, depsgraph=None):
         if tick_count < 15: 
             update_mesh_data(target_mesh)
         else:
-            update_mesh_data_fast(target_mesh)
+            ##TODO: Add functionality to determine when a full update is required
+            ##      (e.g. switching to flying requires texture updates)
+            update_mesh_data(target_mesh)
+            #update_mesh_data_fast(target_mesh)
 
     tick_count += 1
     return None
@@ -422,15 +443,27 @@ def initialize_all_data(texture_buffer):
     mix_node.data_type = 'RGBA'
     mix_node.blend_type = 'MIX'
 
+    transparent_node = nodes.new(type='ShaderNodeBsdfTransparent')
+
+    shader_mix_node = nodes.new(type='ShaderNodeMixShader')
+
+    math_node = nodes.new(type='ShaderNodeMath')
+    math_node.operation = 'MAXIMUM'
+
     diffuse_node = nodes.new(type='ShaderNodeBsdfDiffuse')
 
     out_node = nodes.new(type='ShaderNodeOutputMaterial')
 
     links.new(tex_node.outputs['Color'], mix_node.inputs['B'])
     links.new(tex_node.outputs['Alpha'], mix_node.inputs['Factor'])
+    links.new(tex_node.outputs['Alpha'], math_node.inputs[1])
     links.new(color_node.outputs['Color'], mix_node.inputs['A'])
+    links.new(color_node.outputs['Alpha'], math_node.inputs[0])
     links.new(mix_node.outputs['Result'], diffuse_node.inputs['Color'])
-    links.new(diffuse_node.outputs['BSDF'], out_node.inputs['Surface'])
+    links.new(diffuse_node.outputs['BSDF'], shader_mix_node.inputs[2])
+    links.new(math_node.outputs['Value'], shader_mix_node.inputs[0])
+    links.new(transparent_node.outputs['BSDF'], shader_mix_node.inputs[1])
+    links.new(shader_mix_node.outputs['Shader'], out_node.inputs['Surface'])
 
     mesh = bpy.data.meshes.new('libsm64_mario_mesh')
 
@@ -461,7 +494,7 @@ def initialize_all_data(texture_buffer):
     mesh.update()
 
 def update_mesh_data(mesh: bpy.types.Mesh):
-    global mario_geo, origin_offset, SM64_SCALE_FACTOR, mesh_vertex_offsets
+    global mario_geo, SM64_SCALE_FACTOR
     
     num_tris = mario_geo.numTrianglesUsed
     num_verts = num_tris * 3
@@ -488,12 +521,18 @@ def update_mesh_data(mesh: bpy.types.Mesh):
             
             c0 = (3 * i + 0) * 4
             colors[c0:c0+3] = [mario_geo.color_data[base_sm64+0], mario_geo.color_data[base_sm64+1], mario_geo.color_data[base_sm64+2]]
+            if num_tris > 752 and i >= num_tris - 8:
+                colors[c0+3] = 0.0
             
             c1 = (3 * i + 1) * 4
             colors[c1:c1+3] = [mario_geo.color_data[base_sm64+3], mario_geo.color_data[base_sm64+4], mario_geo.color_data[base_sm64+5]]
+            if num_tris > 752 and i >= num_tris - 8:
+                colors[c1+3] = 0.0
             
             c2 = (3 * i + 2) * 4
             colors[c2:c2+3] = [mario_geo.color_data[base_sm64+6], mario_geo.color_data[base_sm64+7], mario_geo.color_data[base_sm64+8]]
+            if num_tris > 752 and i >= num_tris - 8:
+                colors[c2+3] = 0.0
             
         color_attr.data.foreach_set("color", colors)
 
@@ -502,7 +541,7 @@ def update_mesh_data(mesh: bpy.types.Mesh):
 
 
 def update_mesh_data_fast(mesh: bpy.types.Mesh):
-    global mario_geo, mario_state, origin_offset, SM64_SCALE_FACTOR, mesh_vertex_offsets
+    global mario_geo, mario_state, SM64_SCALE_FACTOR
 
     mario_obj = bpy.data.objects.get('LibSM64 Mario')
     if mario_obj and mario_obj.mode == 'EDIT':

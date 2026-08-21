@@ -52,7 +52,6 @@ bpy.types.Scene.music_dropdown = bpy.props.EnumProperty(
 )
 
 def update_follow_cam(self, context):
-    global follow_cam
     mario.follow_cam = self.camera_follow
 
 class LibSm64Properties(bpy.types.PropertyGroup):
@@ -108,12 +107,14 @@ class Main_PT_Panel(bpy.types.Panel):
         prop_split(col, scene.libsm64, "mario_scale", "Blender to SM64 Scale")
         col.prop(preferences, "rom_path")
         col.prop(scene.libsm64, "camera_follow")
-        layout.prop(scene, "music_dropdown", text = "Choose")
+        col.prop(scene, "music_dropdown", text = "Choose")
         col.operator(InsertMario_OT_Operator.bl_idname, text='Insert Mario')
         col.prop(scene.libsm64, "camera_shift")
         col.operator(ControlMario_OT_Operator.bl_idname, text='Control Mario with keyboard')
         col.label(text="WASD + JKL to move. ESC to stop.")
         col.operator("object.sdl_modal", text="Connect Controller")
+        col.operator(AddWingCap_OT_Operator.bl_idname, text='Add Wing Cap')
+        col.operator(AddMetalCap_OT_Operator.bl_idname, text='Add Metal Cap')
 
 class InsertMario_OT_Operator(bpy.types.Operator):
     bl_idname = "view3d.libsm64_insert_mario"
@@ -128,6 +129,27 @@ class InsertMario_OT_Operator(bpy.types.Operator):
             self.report({"ERROR"}, err)
         return {'FINISHED'}
 
+class AddWingCap_OT_Operator(bpy.types.Operator):
+    bl_idname = "view3d.libsm64_add_wing_cap"
+    bl_label = "Add Wing Cap"
+
+    def execute(self, context):
+        scene = context.scene
+        err = mario.add_cap(mario.MARIO_WING_CAP)
+        if err != None:
+            self.report({"ERROR"}, err)
+        return {'FINISHED'}
+
+class AddMetalCap_OT_Operator(bpy.types.Operator):
+    bl_idname = "view3d.libsm64_add_metal_cap"
+    bl_label = "Add Metal Cap"
+
+    def execute(self, context):
+        scene = context.scene
+        err = mario.add_cap(mario.MARIO_METAL_CAP)
+        if err != None:
+            self.report({"ERROR"}, err)
+        return {'FINISHED'}
 
 class ControlMario_OT_Operator(bpy.types.Operator):
     bl_idname = "view3d.libsm64_control_mario"
@@ -292,7 +314,9 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     Main_PT_Panel,
     InsertMario_OT_Operator,
     ControlMario_OT_Operator,
-    ConnectController_OT_Operator
+    ConnectController_OT_Operator,
+    AddWingCap_OT_Operator,
+    AddMetalCap_OT_Operator
 ))
 
 def register():
