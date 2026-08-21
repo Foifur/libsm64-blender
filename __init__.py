@@ -34,6 +34,7 @@ def update_follow_cam(self, context):
 
     if hasattr(context.scene, 'libsm64'):
         follow_cam = context.scene.libsm64.camera_follow
+    mario.follow_cam = self.camera_follow
 
 class LibSm64Properties(bpy.types.PropertyGroup):
     camera_follow: bpy.props.BoolProperty (
@@ -149,12 +150,11 @@ class ConnectController_OT_Operator(bpy.types.Operator):
 
         if self._event:
             while sdl.SDL_PollEvent(ctypes.byref(self._event)) != 0:
-
                 # Handle Axis Motion
                 if self._event.type == sdl.SDL_JOYAXISMOTION:
                     axis_num = self._event.jaxis.axis
                     raw_val = float(self._event.jaxis.value)
-                    print(f"Axis {axis_num}: {raw_val}")
+                    #print(f"Axis {axis_num}: {raw_val}")
 
                     scaled_val = raw_val / 512.0
 
@@ -163,10 +163,15 @@ class ConnectController_OT_Operator(bpy.types.Operator):
 
                     normalized_val = scaled_val / 64.0
 
-                    if axis_num == 0:
-                        mario_inputs.stickX = -normalized_val
-                    elif axis_num == 1:
-                        mario_inputs.stickY = -normalized_val
+                    match axis_num:
+                        case 0:
+                            mario_inputs.stickX = -normalized_val
+                        case 1:
+                            mario_inputs.stickY = -normalized_val
+                        case 2:
+                            mario_inputs.camLookZ = -normalized_val
+                        case 3:
+                            mario_inputs.camLookX = -normalized_val
 
                 # Handle Button Presses
                 elif self._event.type == sdl.SDL_JOYBUTTONDOWN:

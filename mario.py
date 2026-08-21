@@ -2,7 +2,10 @@ import bpy
 import os
 import platform
 import ctypes as ct
+import time
+import math
 import mathutils
+import copy
 from typing import cast, List
 from . import audio_stream as audio
 from . collision_types import COLLISION_TYPES
@@ -92,6 +95,7 @@ last_cam_change_tick = -30
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam
     global last_known_mario_mode
+    global last_known_mario_mode, last_time
 
     SM64_SCALE_FACTOR = scale
 
@@ -181,6 +185,8 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     bpy.app.handlers.depsgraph_update_post.append(mario_mode_property_update_callback)
 
     tick_count = 0
+    
+    last_time = time.time()
 
     return None
 
@@ -194,8 +200,17 @@ def stop_tick_mario():
     sm64.sm64_global_terminate()
     sm64 = None
 
+look_sens = 2.5
+current_time = 0.0
+last_time = 0.0
+delta_time = 0.0
 def tick_mario(scene, depsgraph=None):
     global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
+    global mario_inputs, current_time, last_time, delta_time, look_sens
+
+    current_time = time.time()
+    delta_time = current_time - last_time
+    last_time = current_time
     
     if not ('LibSM64 Mario' in bpy.data.objects):
         stop_tick_mario()
@@ -228,10 +243,20 @@ def tick_mario(scene, depsgraph=None):
     if delta_vec.length > 0.001:
         delta_vec.normalize()
 
-    mario_inputs.camLookX = delta_vec.x
-    mario_inputs.camLookZ = -delta_vec.y
+    current_euler = r3d.view_rotation.to_euler('XYZ')
+    
+    new_pitch = max(min(current_euler.x + mario_inputs.camLookX * delta_time * look_sens, math.radians(89)), math.radians(-89))
+    new_yaw = current_euler.z + mario_inputs.camLookZ * delta_time * look_sens
+    
+    new_euler = mathutils.Euler((new_pitch, 0.0, new_yaw), 'XYZ')
+    
+    r3d.view_rotation = new_euler.to_quaternion()
 
-    sm64.sm64_mario_tick(sm64_mario_id, ct.byref(mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
+    final_mario_inputs = copy.copy(mario_inputs)
+    final_mario_inputs.camLookX = delta_vec.x
+    final_mario_inputs.camLookZ = -delta_vec.y
+
+    sm64.sm64_mario_tick(sm64_mario_id, ct.byref(final_mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
     mario_world_x = origin_offset[0] + mario_state.posX / SM64_SCALE_FACTOR
     mario_world_y = origin_offset[1] - mario_state.posZ / SM64_SCALE_FACTOR
