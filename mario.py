@@ -2,9 +2,9 @@ import bpy
 import os
 import platform
 import ctypes as ct
-import math
 import mathutils
 from typing import cast, List
+from . import audio_stream as audio
 from . collision_types import COLLISION_TYPES
 
 if platform.system() == 'Windows':
@@ -17,7 +17,6 @@ SM64_SCALE_FACTOR = 50
 
 origin_offset = [0.0, 0.0, 0.0]
 original_fps = 0
-original_cursor_pos = [0.0, 0.0, 0.0]
 
 is_handling_mode_change = False
 
@@ -91,7 +90,8 @@ last_cam_change_tick = -30
 
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
-    global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, original_cursor_pos, follow_cam
+    global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam
+    global last_known_mario_mode
 
     SM64_SCALE_FACTOR = scale
 
@@ -101,11 +101,6 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         pass
     bpy.ops.object.select_all(action='DESELECT')
 
-    original_cursor_pos = [
-        bpy.context.scene.cursor.location.x,
-        bpy.context.scene.cursor.location.y,
-        bpy.context.scene.cursor.location.z
-    ]
     follow_cam = camera_follow
 
     origin_offset[0] = bpy.context.scene.cursor.location.x
@@ -116,11 +111,10 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         bpy.data.objects['LibSM64 Mario'].select_set(True) # Blender 2.8x
         bpy.ops.object.delete()
 
-    #stop_input_reader()
-
     if sm64 != None:
         try:
             stop_tick_mario()
+            audio.stop_audio_stream()
         except:
             pass
 
@@ -135,6 +129,14 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_mario_create.restype = ct.c_int32
     sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(SM64MarioInputs), ct.POINTER(SM64MarioState), ct.POINTER(SM64MarioGeometryBuffers) ]
 
+    sm64.sm64_audio_init.argtypes = [ct.c_char_p]
+    sm64.sm64_audio_init.restype = None
+    sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
+    sm64.sm64_audio_tick.restype = ct.c_uint32
+
+    with open(dll_path, 'rb') as f:
+        rom_data = f.read()
+
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
         old_mesh.user_clear()
@@ -146,6 +148,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         texture_buff = (ct.c_ubyte * (4 * SM64_TEXTURE_WIDTH * SM64_TEXTURE_HEIGHT))()
         sm64.sm64_global_init(rom_chars.from_buffer(rom_bytes), texture_buff)
         initialize_all_data(texture_buff)
+        sm64.sm64_audio_init(rom_chars.from_buffer(rom_bytes))
 
     (surface_array, surface_array_len) = get_surface_array_from_scene()
 
@@ -161,12 +164,12 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     mario_obj = bpy.data.objects.new('LibSM64 Mario', bpy.data.meshes['libsm64_mario_mesh'])
     bpy.context.scene.collection.objects.link(mario_obj)
 
-    #start_input_reader()
-
     original_fps = bpy.context.scene.render.fps
     bpy.context.scene.render.fps = 30
     bpy.ops.screen.animation_play()
     bpy.app.handlers.frame_change_pre.append(tick_mario)
+
+    audio.start_audio_stream(sm64)
 
     global mesh_vertex_offsets
     mesh_vertex_offsets.clear()
@@ -182,19 +185,14 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     return None
 
 def stop_tick_mario():
-    global sm64, sm64_mario_id, original_fps, original_cursor_pos
+    global sm64, sm64_mario_id, original_fps
     bpy.app.handlers.frame_change_pre.clear()
     bpy.context.scene.render.fps = original_fps
-    bpy.context.scene.cursor.location = (
-        original_cursor_pos[0],
-        original_cursor_pos[1],
-        original_cursor_pos[2]
-    )
+
     bpy.ops.screen.animation_cancel()
     sm64_mario_id = -1
     sm64.sm64_global_terminate()
     sm64 = None
-    #stop_input_reader()
 
 def tick_mario(scene, depsgraph=None):
     global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
@@ -231,7 +229,7 @@ def tick_mario(scene, depsgraph=None):
         delta_vec.normalize()
 
     mario_inputs.camLookX = delta_vec.x
-    mario_inputs.camLookZ = -delta_vec.y  # Depth alignment maps safely into libsm64 Z space
+    mario_inputs.camLookZ = -delta_vec.y
 
     sm64.sm64_mario_tick(sm64_mario_id, ct.byref(mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
