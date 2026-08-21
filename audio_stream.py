@@ -44,7 +44,7 @@ class AudioStreamState:
 
 sm64 = None
 winmm = ct.windll.winmm
-_audio = AudioStreamState()
+_audio = None
 
 def tick_audio(audio):
     """Runs on a background thread. Technically doesn't tick at the usual rate, but"""
@@ -92,9 +92,10 @@ def tick_audio(audio):
 def start_audio_stream(sm64_lib):
     global _audio, sm64
     
-    if _audio.thread_running:
+    if _audio and _audio.thread_running:
         return
 
+    _audio = AudioStreamState()
     _audio.shutdown_event.clear()
 
     sm64 = sm64_lib
@@ -127,19 +128,14 @@ def stop_audio_stream():
     if _audio.playback_thread and _audio.playback_thread.is_alive():
         _audio.playback_thread.join(timeout=0.5)
 
-    _audio.playback_thread = None
-
     if _audio.hWaveOut:
         for hdr in _audio.headers:
             if hdr.dwFlags & WaveHdrFlags.WHDR_INQUEUE:
                 winmm.waveOutUnprepareHeader(_audio.hWaveOut, ct.byref(hdr), ct.sizeof(WAVEHDR))
         winmm.waveOutClose(_audio.hWaveOut)
 
-        _audio.hWaveOut = ct.c_void_p()
-
-    _audio.raw_byte_pools = None
-    _audio.headers = None
 
     sm64 = None
+    _audio = None
         
     print("Audio thread is now stopped.")
