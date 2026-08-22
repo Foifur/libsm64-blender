@@ -38,6 +38,9 @@ MARIO_WING_CAP          = 0x00000008
 MARIO_SPECIAL_CAPS = (MARIO_VANISH_CAP | MARIO_METAL_CAP | MARIO_WING_CAP)
 MARIO_CAPS = (MARIO_NORMAL_CAP | MARIO_SPECIAL_CAPS)
 
+ACT_FLAG_SWIMMING               = 0x00002000
+ACT_FLAG_SWIMMING_OR_FLYING     = 0x10000000
+
 class SM64Surface(ct.Structure):
     _fields_ = [
         ('surftype', ct.c_int16),
@@ -313,6 +316,10 @@ def tick_mario(scene, depsgraph=None):
     final_mario_inputs = copy.copy(mario_inputs)
     final_mario_inputs.camLookX = delta_vec.x
     final_mario_inputs.camLookZ = -delta_vec.y
+
+    if (mario_state.flags & MARIO_WING_CAP and mario_state.action & ACT_FLAG_SWIMMING_OR_FLYING) OR MARIO_STATE.ACTION & act_flag_swimming:
+        final_mario_inputs.stickX *= -1
+        final_mario_inputs.stickY *= -1
 
     sm64.sm64_mario_tick(sm64_mario_id, ct.byref(final_mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
