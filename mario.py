@@ -93,6 +93,46 @@ class SM64MarioGeometryBuffers(ct.Structure):
     def __del__(self):
         pass
 
+class BackgroundLoop:
+    def __init__(self):
+        self.fps = 60
+        self.interval = 1.0 / self.fps
+        self.last_time = time.perf_counter()
+        self.frame_count = 0
+
+    def __call__(self):
+        current_time = time.perf_counter()
+        delta = current_time - self.last_time
+
+        if delta >= self.interval:
+            self.frame_count += 1
+            self.last_time = current_time
+
+            view3d = None
+            for a in bpy.context.window.screen.areas:
+                if a.type == 'VIEW_3D':
+                    view3d = a
+                    break
+                    
+            if view3d is None or not view3d.spaces:
+                return None
+
+            print(self.frame_count)
+
+            r3d = view3d.spaces[0].region_3d
+            current_euler = r3d.view_rotation.to_euler('XYZ')
+            
+            new_pitch = max(min(current_euler.x + mario_inputs.camLookX * self.interval * look_sens, math.radians(89)), math.radians(-89))
+            new_yaw = current_euler.z + mario_inputs.camLookZ * self.interval * look_sens
+            
+            new_euler = mathutils.Euler((new_pitch, 0.0, new_yaw), 'XYZ')
+            
+            r3d.view_rotation = new_euler.to_quaternion()
+
+        return 0.0
+
+
+
 sm64: ct.CDLL = None
 sm64_mario_id = -1
 
@@ -195,6 +235,9 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
     #sm64.sm64_mario_interact_cap(sm64_mario_id, MARIO_WING_CAP, 0, 1)
 
+    background_loop = BackgroundLoop()
+    bpy.app.timers.register(background_loop, first_interval=0.0)
+
 
     global mesh_vertex_offsets
     mesh_vertex_offsets.clear()
@@ -264,15 +307,6 @@ def tick_mario(scene, depsgraph=None):
     
     if delta_vec.length > 0.001:
         delta_vec.normalize()
-
-    current_euler = r3d.view_rotation.to_euler('XYZ')
-    
-    new_pitch = max(min(current_euler.x + mario_inputs.camLookX * delta_time * look_sens, math.radians(89)), math.radians(-89))
-    new_yaw = current_euler.z + mario_inputs.camLookZ * delta_time * look_sens
-    
-    new_euler = mathutils.Euler((new_pitch, 0.0, new_yaw), 'XYZ')
-    
-    r3d.view_rotation = new_euler.to_quaternion()
 
     sample_input_reader(mario_inputs)
 
