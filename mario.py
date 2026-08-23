@@ -120,8 +120,6 @@ class BackgroundLoop:
             if view3d is None or not view3d.spaces:
                 return None
 
-            print(self.frame_count)
-
             r3d = view3d.spaces[0].region_3d
             current_euler = r3d.view_rotation.to_euler('XYZ')
             
@@ -147,6 +145,8 @@ tick_count = 0
 last_cam_change_tick = -30
 
 music_select = MusicSeqId.SEQ_RANDOM_MUSIC
+
+water_blocks = []
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam
@@ -195,6 +195,9 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_audio_tick.restype = ct.c_uint32
     sm64.sm64_play_music.argtypes = [ct.c_uint8, ct.c_uint16, ct.c_uint16]
     sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
+
+    sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
+    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int]
 
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
@@ -275,7 +278,7 @@ current_time = 0.0
 last_time = 0.0
 delta_time = 0.0
 def tick_mario(scene, depsgraph=None):
-    global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
+    global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam, water_blocks
     global mario_inputs, current_time, last_time, delta_time, look_sens
 
     current_time = time.time()
@@ -306,6 +309,21 @@ def tick_mario(scene, depsgraph=None):
         origin_offset[2] + mario_state.posY / SM64_SCALE_FACTOR
     ))
 
+    is_in_water = False
+    for water_block in water_blocks:
+        if is_inside_volume(mario_world_pos, water_block):
+            water_obj = water_block
+            z_loc = water_obj.location.z
+            z_dim = water_obj.dimensions.z
+            z_scale = water_obj.scale.z
+
+            water_level = (z_loc - origin_offset[2] + (z_dim/2.0 * z_scale)) * SM64_SCALE_FACTOR
+            sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(int(water_level)))
+            is_in_water = True
+
+    if not is_in_water:
+        sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(-10000))
+
     delta_vec = cam_world_pos - mario_world_pos
     
     if delta_vec.length > 0.001:
@@ -317,7 +335,7 @@ def tick_mario(scene, depsgraph=None):
     final_mario_inputs.camLookX = delta_vec.x
     final_mario_inputs.camLookZ = -delta_vec.y
 
-    if (mario_state.flags & MARIO_WING_CAP and mario_state.action & ACT_FLAG_SWIMMING_OR_FLYING) OR MARIO_STATE.ACTION & act_flag_swimming:
+    if (mario_state.action & ACT_FLAG_SWIMMING_OR_FLYING):
         final_mario_inputs.stickX *= -1
         final_mario_inputs.stickY *= -1
 
@@ -397,6 +415,7 @@ def get_surface_array_from_scene():
     return (surface_array, j)
 
 def get_all_surfaces():
+    global water_blocks
     def add_mesh(obj: bpy.types.Object, out):
         mesh = obj.data
         mesh.calc_loop_triangles()
@@ -433,8 +452,14 @@ def get_all_surfaces():
 
     scene = bpy.context.window.scene
     out = []
+    water_blocks = []
 
     for obj in cast(List[bpy.types.Object], scene.collection.all_objects):
+        if "water" in obj.name.lower():
+            print(f"added {obj.name}")
+            water_blocks.append(obj)
+            continue
+
         if isinstance(obj.data, bpy.types.Mesh):
             add_mesh(obj, out)
 
@@ -735,3 +760,30 @@ def on_mode_change(scene=None):
 
 def mario_mode_property_update_callback(self, context):
     bpy.app.timers.register(on_mode_change, first_interval=0.0)
+
+def is_inside_volume(vector, obj):
+    #Transform the world-space vector into the object's local space
+    matrix_invert = obj.matrix_world.inverted()
+    local_vector = matrix_invert @ vector
+
+    ray_destination = local_vector + mathutils.Vector((0, 0, 10000))
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    obj_eval = obj.evaluated_get(depsgraph)
+    bvh = mathutils.bvhtree.BVHTree.FromObject(obj_eval, depsgraph)
+
+    intersections = 0
+    ray_origin = local_vector
+
+    while True:
+        location, normal, index, distance = bvh.ray_cast(ray_origin, ray_destination - ray_origin)
+
+        if location is None:
+            break
+
+        intersections += 1
+        
+        ray_origin = location + (ray_destination - ray_origin).normalized() * 0.0001
+
+    # An odd number of intersections means the point started *inside* the closed volume
+    return (intersections % 2) == 1
