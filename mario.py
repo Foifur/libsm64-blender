@@ -43,6 +43,19 @@ ACT_FLAG_SWIMMING               = 0x00002000
 ACT_FLAG_SWIMMING_OR_FLYING     = 0x10000000
 
 class SM64Surface(ct.Structure):
+    surftype: int
+    force: int
+    terrain: int
+    v0x: int
+    v0y: int
+    v0z: int
+    v1x: int
+    v1y: int
+    v1z: int
+    v2x: int
+    v2y: int
+    v2z: int
+
     _fields_ = [
         ('surftype', ct.c_int16),
         ('force', ct.c_int16),
@@ -53,6 +66,14 @@ class SM64Surface(ct.Structure):
     ]
 
 class SM64MarioInputs(ct.Structure):
+    camLookX: float
+    camLookZ: float
+    stickX: float
+    stickY: float
+    buttonA: int
+    buttonB: int
+    buttonZ: int
+
     _fields_ = [
         ('camLookX', ct.c_float), ('camLookZ', ct.c_float),
         ('stickX', ct.c_float), ('stickY', ct.c_float),
@@ -60,6 +81,22 @@ class SM64MarioInputs(ct.Structure):
     ]
 
 class SM64MarioState(ct.Structure):
+    posX: float
+    posY: float
+    posZ: float
+    velX: float
+    velY: float
+    velZ: float
+    faceAngle: float
+    forwardVelocity: float
+    health: int
+    action: int
+    animID: int
+    animFrame: int
+    flags: int
+    particleFlags: int
+    invicTimer: int
+
     _fields_ = [
         ('posX', ct.c_float), ('posY', ct.c_float), ('posZ', ct.c_float),
         ('velX', ct.c_float), ('velY', ct.c_float), ('velZ', ct.c_float),
@@ -70,11 +107,17 @@ class SM64MarioState(ct.Structure):
         ('animID', ct.c_int32),
         ('animFrame', ct.c_int16),
         ('flags', ct.c_uint32),
-        ('particleFlages', ct.c_uint32),
+        ('particleFlags', ct.c_uint32),
         ('invicTimer', ct.c_int16),        
     ]
 
 class SM64MarioGeometryBuffers(ct.Structure):
+    position: "ct._Pointer[float]"
+    normal: "ct._Pointer[float]"
+    color: "ct._Pointer[float]"
+    uv: "ct._Pointer[float]"
+    numTrianglesUsed: int
+
     _fields_ = [
         ('position', ct.POINTER(ct.c_float)),
         ('normal', ct.POINTER(ct.c_float)),
