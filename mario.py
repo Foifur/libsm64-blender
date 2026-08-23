@@ -80,6 +80,30 @@ class SM64MarioInputs(ct.Structure):
         ('buttonA', ct.c_ubyte), ('buttonB', ct.c_ubyte), ('buttonZ', ct.c_ubyte),
     ]
 
+class SM64ObjectTransform(ct.Structure):
+    posX: float
+    posY: float
+    posZ: float
+    eulX: float
+    eulY: float
+    eulZ: float
+
+    _fields_ = [
+        ('posX', ct.c_float), ('posY', ct.c_float), ('posZ', ct.c_float),
+        ('eulX', ct.c_float), ('eulY', ct.c_float), ('eulZ', ct.c_float),
+    ]
+
+class SM64SurfaceObject(ct.Structure):
+    transform: SM64ObjectTransform
+    surfaceCount: int
+    surfaces: "ct._Pointer[SM64Surface]"
+
+    _fields_ = [
+        ('transform', SM64ObjectTransform),
+        ('surfaceCount', ct.c_uint32),
+        ('surfaces', ct.POINTER(SM64Surface))
+    ]
+
 class SM64MarioState(ct.Structure):
     posX: float
     posY: float
@@ -190,6 +214,7 @@ last_cam_change_tick = -30
 
 music_select = MusicSeqId.SEQ_RANDOM_MUSIC
 
+moving_objects = []
 water_blocks = []
 
 background_loop = None
@@ -239,11 +264,16 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_audio_init.restype = None
     sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
     sm64.sm64_audio_tick.restype = ct.c_uint32
-    sm64.sm64_play_music.argtypes = [ct.c_uint8, ct.c_uint16, ct.c_uint16]
+    sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
     sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
 
     sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
-    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int]
+    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
+
+    sm64.sm64_surface_object_create.argtypes = [ ct.POINTER(SM64SurfaceObject) ]
+    sm64.sm64_surface_object_create.restype = ct.c_uint32
+    sm64.sm64_surface_object_move.argtypes = [ ct.c_uint32, ct.POINTER(SM64ObjectTransform) ]
+    sm64.sm64_surface_object_delete.argtypes = [ ct.c_uint32 ]
 
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
@@ -325,12 +355,32 @@ current_time = 0.0
 last_time = 0.0
 delta_time = 0.0
 def tick_mario(scene, depsgraph=None):
-    global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam, water_blocks
+    global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
+    global water_blocks, moving_objects
     global mario_inputs, current_time, last_time, delta_time, look_sens
 
     current_time = time.time()
     delta_time = current_time - last_time
     last_time = current_time
+
+    for objId, obj_name, loc_origin, euler_origin in moving_objects:
+        obj = bpy.data.objects[obj_name]
+        location, rotation_quat, scale = obj.matrix_world.decompose()
+
+        sm64_euler = rotation_quat.to_euler()
+
+        transform = SM64ObjectTransform(
+            posX = SM64_SCALE_FACTOR * (location.x - loc_origin.x),
+            posY = SM64_SCALE_FACTOR * (location.z - loc_origin.z),
+            posZ = SM64_SCALE_FACTOR * (loc_origin.y - location.y),
+            eulX = (-math.degrees(sm64_euler.x) - euler_origin.x),
+            eulY = (-math.degrees(sm64_euler.z) - euler_origin.y),
+            eulZ = (-math.degrees(sm64_euler.y) - euler_origin.z)
+        )
+
+        print(f"delta {transform.posX} {transform.posY} {transform.posZ}")
+
+        sm64.sm64_surface_object_move(objId, transform)
     
     if not ('LibSM64 Mario' in bpy.data.objects):
         stop_tick_mario()
@@ -357,7 +407,8 @@ def tick_mario(scene, depsgraph=None):
     ))
 
     is_in_water = False
-    for water_block in water_blocks:
+    for obj_name in water_blocks:
+        water_block = bpy.data.objects[obj_name]
         if is_inside_volume(mario_world_pos, water_block):
             water_obj = water_block
             z_loc = water_obj.location.z
@@ -419,12 +470,74 @@ def clamp_bounds(val):
         return (bounds, False)
     return (val, True)
 
+def add_mesh(obj: bpy.types.Object, out):
+    mesh = obj.data
+    mesh.calc_loop_triangles()
+    for tri in cast(List[bpy.types.MeshLoopTriangle], mesh.loop_triangles):
+        out_elem = {}
+        for i in range(3):
+            tri_idx = tri.vertices[i]
+            vx = mesh.vertices[tri_idx].co.x
+            vy = mesh.vertices[tri_idx].co.y
+            vz = mesh.vertices[tri_idx].co.z
+            vworld = obj.matrix_world @ mathutils.Vector((vx, vy, vz, 1))
+            out_elem['v' + str(i) + 'x'] = vworld.x
+            out_elem['v' + str(i) + 'y'] = vworld.y
+            out_elem['v' + str(i) + 'z'] = vworld.z
+
+        out_elem['terrain'] = TERRAIN_TYPES[obj.sm64_terrain_type_dropdown]
+        out_elem['surftype'] = SURFACE_TYPES[obj.sm64_surface_type_dropdown]
+        out.append(out_elem)
+
 def get_surface_array_from_scene():
-    global origin_offset
+    global origin_offset, water_blocks, moving_objects
 
-    surfaces = get_all_surfaces()
+    scene = bpy.context.window.scene
+    surfaces = []
+    moving_objects = []
+    water_blocks = []
+
+    for obj in cast(List[bpy.types.Object], scene.collection.all_objects):
+        # water blocks don't get added to the static surfaces
+        if "water" in obj.name.lower():
+            water_blocks.append(obj.name)
+            continue
+
+        if obj.sm64_surface_type_dropdown == "SURFACE_NOT_SLIPPERY":
+            location, rotation_quat, scale = obj.matrix_world.decompose()
+            obj_surfaces = []
+            add_mesh(obj, obj_surfaces)
+            (surf_obj_array, surf_count) = build_surface_array(obj_surfaces)
+
+            euler = rotation_quat.to_euler()
+
+            surface_object = SM64SurfaceObject(
+                transform = SM64ObjectTransform(
+                    posX = location.x,
+                    posY = location.z,
+                    posZ = location.y,
+                    eulX = euler.x,
+                    eulY = euler.z,
+                    eulZ = -euler.y
+                ),
+                surfaceCount = surf_count,
+                surfaces = surf_obj_array
+            )
+
+            objId = sm64.sm64_surface_object_create(surface_object)
+            moving_objects.append((objId, obj.name, location.copy(), euler.copy()))
+            continue
+
+
+        if isinstance(obj.data, bpy.types.Mesh):
+            add_mesh(obj, surfaces)
+
+    (surface_array, j) = build_surface_array(surfaces)
+
+    return (surface_array, j)
+
+def build_surface_array(surfaces):
     surface_array = (SM64Surface * len(surfaces))()
-
     j = 0
 
     for i in range(len(surfaces)):
@@ -461,41 +574,7 @@ def get_surface_array_from_scene():
 
     return (surface_array, j)
 
-def get_all_surfaces():
-    global water_blocks
-    def add_mesh(obj: bpy.types.Object, out):
-        mesh = obj.data
-        mesh.calc_loop_triangles()
-        for tri in cast(List[bpy.types.MeshLoopTriangle], mesh.loop_triangles):
-            out_elem = {}
-            for i in range(3):
-                tri_idx = tri.vertices[i]
-                vx = mesh.vertices[tri_idx].co.x
-                vy = mesh.vertices[tri_idx].co.y
-                vz = mesh.vertices[tri_idx].co.z
-                vworld = obj.matrix_world @ mathutils.Vector((vx, vy, vz, 1))
-                out_elem['v' + str(i) + 'x'] = vworld.x
-                out_elem['v' + str(i) + 'y'] = vworld.y
-                out_elem['v' + str(i) + 'z'] = vworld.z
-
-            out_elem['terrain'] = TERRAIN_TYPES[obj.sm64_terrain_type_dropdown]
-            out_elem['surftype'] = SURFACE_TYPES[obj.sm64_surface_type_dropdown]
-            out.append(out_elem)
-
-    scene = bpy.context.window.scene
-    out = []
-    water_blocks = []
-
-    for obj in cast(List[bpy.types.Object], scene.collection.all_objects):
-        if "water" in obj.name.lower():
-            print(f"added {obj.name}")
-            water_blocks.append(obj)
-            continue
-
-        if isinstance(obj.data, bpy.types.Mesh):
-            add_mesh(obj, out)
-
-    return out
+    
 
 def initialize_all_data(texture_buffer):
     size = SM64_TEXTURE_WIDTH, SM64_TEXTURE_HEIGHT
