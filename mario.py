@@ -148,8 +148,10 @@ music_select = MusicSeqId.SEQ_RANDOM_MUSIC
 
 water_blocks = []
 
+background_loop = None
+
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
-    global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam
+    global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam, background_loop
     global last_known_mario_mode, last_time
     global music_select
 
@@ -241,8 +243,9 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
     #sm64.sm64_mario_interact_cap(sm64_mario_id, MARIO_WING_CAP, 0, 1)
 
-    background_loop = BackgroundLoop()
-    bpy.app.timers.register(background_loop, first_interval=0.0)
+    if background_loop == None:
+        background_loop = BackgroundLoop()
+        bpy.app.timers.register(background_loop, first_interval=0.0)
 
 
     global mesh_vertex_offsets
