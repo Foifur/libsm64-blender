@@ -12,7 +12,8 @@ from . import audio_types
 from .audio_types import MusicSeqId
 from typing import cast, List
 from . import audio_stream as audio
-from . collision_types import COLLISION_TYPES
+from . surface_terrains import SURFACE_TYPES
+from . surface_terrains import TERRAIN_TYPES
 
 if platform.system() == 'Windows':
     from . input_reader import sample_input_reader
@@ -276,7 +277,7 @@ def stop_tick_mario():
     sm64.sm64_global_terminate()
     sm64 = None
 
-look_sens = 2.5
+look_sens = 3.0
 current_time = 0.0
 last_time = 0.0
 delta_time = 0.0
@@ -434,22 +435,22 @@ def get_all_surfaces():
                 out_elem['v' + str(i) + 'y'] = vworld.y
                 out_elem['v' + str(i) + 'z'] = vworld.z
 
-            out_elem['terrain'] = COLLISION_TYPES['TERRAIN_GRASS']
+            out_elem['terrain'] = TERRAIN_TYPES[obj.sm64_terrain_type_dropdown]
             seek = obj
             while True:
                 if hasattr(seek, 'sm64_obj_type') and seek.sm64_obj_type == 'Area Root' and hasattr(seek, 'terrainEnum'):
-                    out_elem['terrain'] = COLLISION_TYPES[seek.terrainEnum]
+                    out_elem['terrain'] = TERRAIN_TYPES[seek.terrainEnum]
                     break
                 if seek.parent:
                     seek = seek.parent
                 else:
                     break
 
-            out_elem['surftype'] = COLLISION_TYPES['SURFACE_DEFAULT']
+            out_elem['surftype'] = SURFACE_TYPES[obj.sm64_surface_type_dropdown]
             if tri.material_index > 0 and tri.material_index < len(mesh.materials):
                 mat = mesh.materials[tri.material_index]
                 if hasattr(mat, 'collision_type_simple'):
-                    out_elem['surftype'] = COLLISION_TYPES[mat.collision_type_simple]
+                    out_elem['surftype'] = SURFACE_TYPES[mat.collision_type_simple]
 
             out.append(out_elem)
 

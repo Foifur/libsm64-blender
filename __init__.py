@@ -17,6 +17,8 @@ from .mario import insert_mario
 from .mario import mario_inputs
 from . import mario
 from .audio_types import MusicSeqId
+from .surface_terrains import SURFACE_TYPES
+from .surface_terrains import TERRAIN_TYPES
 import ctypes
 
 addon_dir = os.path.dirname(os.path.realpath(__file__))
@@ -275,6 +277,48 @@ class ConnectController_OT_Operator(bpy.types.Operator):
         
         print("SDL2 Controller Reader Stopped.")
 
+class OBJECT_PT_terrain_types(bpy.types.Panel):
+    bl_label = "Terrain Type"
+    bl_idname = "OBJECT_PT_terrain_types"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "object"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+
+        box = layout.box()
+
+        box.prop(obj, "sm64_terrain_type_dropdown")
+
+        current_name = obj.sm64_terrain_type_dropdown
+        current_hex = TERRAIN_TYPES.get(current_name, "N/A")
+
+        row = box.row()
+        row.label(text=f"Active Hex: {current_hex}")
+
+class OBJECT_PT_surface_types(bpy.types.Panel):
+    bl_label = "Surface Type"
+    bl_idname = "OBJECT_PT_surface_types"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "object"
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.object
+
+        box = layout.box()
+
+        box.prop(obj, "sm64_surface_type_dropdown")
+
+        current_name = obj.sm64_surface_type_dropdown
+        current_hex = SURFACE_TYPES.get(current_name, "N/A")
+
+        row = box.row()
+        row.label(text=f"Active Hex: {current_hex}")
+
 config = {
     'keyboard_control': False
 }
@@ -316,18 +360,55 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     ControlMario_OT_Operator,
     ConnectController_OT_Operator,
     AddWingCap_OT_Operator,
-    AddMetalCap_OT_Operator
+    AddMetalCap_OT_Operator,
+    OBJECT_PT_terrain_types,
+    OBJECT_PT_surface_types
 ))
 
 def register():
+
+    bpy.types.Object.sm64_terrain_type_dropdown = bpy.props.EnumProperty(
+        name="SM64 Terrain Type",
+        description="Sets the terrain type for Mario to interact with",
+        items=get_terrain_types
+    )
+
+    bpy.types.Object.sm64_surface_type_dropdown = bpy.props.EnumProperty(
+        name="SM64 Surface Type",
+        description="Sets the surface type for Mario to interact with",
+        items=get_surface_types
+    )
+
     register_classes()
     bpy.types.Scene.libsm64 = bpy.props.PointerProperty(type=LibSm64Properties)
 
 def unregister():
     unregister_classes()
+
+    del bpy.types.Object.sm64_terrain_type_dropdown
+    del bpy.types.Object.sm64_surface_type_dropdown
+
     del bpy.types.Scene.libsm64
 
 def prop_split(layout, data, field, name):
     split = layout.split(factor = 0.5)
     split.label(text = name)
     split.prop(data, field, text = '')
+
+def get_terrain_types(self, context):
+    types = []
+
+    for index, (col_type, value) in enumerate(TERRAIN_TYPES.items()):
+        entry = (col_type, col_type, f"Hex Code: {value}", "", index)
+        types.append(entry)
+
+    return types
+
+def get_surface_types(self, context):
+    types = []
+
+    for index, (col_type, value) in enumerate(SURFACE_TYPES.items()):
+        entry = (col_type, col_type, f"Hex Code: {value}", "", index)
+        types.append(entry)
+
+    return types
