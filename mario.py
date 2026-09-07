@@ -7,21 +7,19 @@ import math
 import mathutils
 import copy
 import random
-from enum import IntEnum
-from . import audio_types
-from .audio_types import MusicSeqId
 from typing import cast, List
+from . import audio_types
+from . import mesh_helpers
+from . mesh_helpers import sm64_scale_factor, mario_geo
+from . mesh_helpers import set_scale_factor
+from . import sm64_types
+from .audio_types import MusicSeqId
 from . import audio_stream as audio
 from . surface_terrains import SURFACE_TYPES
 from . surface_terrains import TERRAIN_TYPES
 
 if platform.system() == 'Windows':
     from . input_reader import sample_input_reader
-
-SM64_TEXTURE_WIDTH = 64 * 11
-SM64_TEXTURE_HEIGHT = 64
-SM64_GEO_MAX_TRIANGLES = 1024
-SM64_SCALE_FACTOR = 50
 
 origin_offset = mathutils.Vector((0.0, 0.0, 0.0))
 original_fps = 0
@@ -40,127 +38,6 @@ MARIO_CAPS = (MARIO_NORMAL_CAP | MARIO_SPECIAL_CAPS)
 ACT_FLAG_SWIMMING               = 0x00002000
 ACT_FLAG_SWIMMING_OR_FLYING     = 0x10000000
 
-class SM64Surface(ct.Structure):
-    surftype: int
-    force: int
-    terrain: int
-    v0x: int
-    v0y: int
-    v0z: int
-    v1x: int
-    v1y: int
-    v1z: int
-    v2x: int
-    v2y: int
-    v2z: int
-
-    _fields_ = [
-        ('surftype', ct.c_int16),
-        ('force', ct.c_int16),
-        ('terrain', ct.c_uint16),
-        ('v0x', ct.c_int32), ('v0y', ct.c_int32), ('v0z', ct.c_int32),
-        ('v1x', ct.c_int32), ('v1y', ct.c_int32), ('v1z', ct.c_int32),
-        ('v2x', ct.c_int32), ('v2y', ct.c_int32), ('v2z', ct.c_int32)
-    ]
-
-class SM64MarioInputs(ct.Structure):
-    camLookX: float
-    camLookZ: float
-    stickX: float
-    stickY: float
-    buttonA: int
-    buttonB: int
-    buttonZ: int
-
-    _fields_ = [
-        ('camLookX', ct.c_float), ('camLookZ', ct.c_float),
-        ('stickX', ct.c_float), ('stickY', ct.c_float),
-        ('buttonA', ct.c_ubyte), ('buttonB', ct.c_ubyte), ('buttonZ', ct.c_ubyte),
-    ]
-
-class SM64ObjectTransform(ct.Structure):
-    posX: float
-    posY: float
-    posZ: float
-    eulX: float
-    eulY: float
-    eulZ: float
-
-    _fields_ = [
-        ('posX', ct.c_float), ('posY', ct.c_float), ('posZ', ct.c_float),
-        ('eulX', ct.c_float), ('eulY', ct.c_float), ('eulZ', ct.c_float),
-    ]
-
-class SM64SurfaceObject(ct.Structure):
-    transform: SM64ObjectTransform
-    surfaceCount: int
-    surfaces: "ct._Pointer[SM64Surface]"
-
-    _fields_ = [
-        ('transform', SM64ObjectTransform),
-        ('surfaceCount', ct.c_uint32),
-        ('surfaces', ct.POINTER(SM64Surface))
-    ]
-
-class SM64MarioState(ct.Structure):
-    posX: float
-    posY: float
-    posZ: float
-    velX: float
-    velY: float
-    velZ: float
-    faceAngle: float
-    forwardVelocity: float
-    health: int
-    action: int
-    animID: int
-    animFrame: int
-    flags: int
-    particleFlags: int
-    invicTimer: int
-
-    _fields_ = [
-        ('posX', ct.c_float), ('posY', ct.c_float), ('posZ', ct.c_float),
-        ('velX', ct.c_float), ('velY', ct.c_float), ('velZ', ct.c_float),
-        ('faceAngle', ct.c_float),
-        ('forwardVelocity', ct.c_float),
-        ('health', ct.c_int16),
-        ('action', ct.c_uint32),
-        ('animID', ct.c_int32),
-        ('animFrame', ct.c_int16),
-        ('flags', ct.c_uint32),
-        ('particleFlags', ct.c_uint32),
-        ('invicTimer', ct.c_int16),        
-    ]
-
-class SM64MarioGeometryBuffers(ct.Structure):
-    position: "ct._Pointer[float]"
-    normal: "ct._Pointer[float]"
-    color: "ct._Pointer[float]"
-    uv: "ct._Pointer[float]"
-    numTrianglesUsed: int
-
-    _fields_ = [
-        ('position', ct.POINTER(ct.c_float)),
-        ('normal', ct.POINTER(ct.c_float)),
-        ('color', ct.POINTER(ct.c_float)),
-        ('uv', ct.POINTER(ct.c_float)),
-        ('numTrianglesUsed', ct.c_uint16)
-    ]
-
-    def __init__(self):
-        self.position_data = (ct.c_float * (SM64_GEO_MAX_TRIANGLES * 3 * 3))()
-        self.position = ct.cast(self.position_data , ct.POINTER(ct.c_float))
-        self.normal_data = (ct.c_float * (SM64_GEO_MAX_TRIANGLES * 3 * 3))()
-        self.normal = ct.cast(self.normal_data , ct.POINTER(ct.c_float))
-        self.color_data = (ct.c_float * (SM64_GEO_MAX_TRIANGLES * 3 * 3))()
-        self.color = ct.cast(self.color_data , ct.POINTER(ct.c_float))
-        self.uv_data = (ct.c_float * (SM64_GEO_MAX_TRIANGLES * 3 * 2))()
-        self.uv = ct.cast(self.uv_data , ct.POINTER(ct.c_float))
-        self.numTrianglesUsed = 0
-
-    def __del__(self):
-        pass
 
 # Specifically handles camera rotation to maintain a consistent framerate for camera rotation, regardless of the framerate of the scene. 
 class BackgroundLoop:
@@ -197,9 +74,8 @@ class BackgroundLoop:
 sm64: ct.CDLL = None
 sm64_mario_id = -1
 
-mario_inputs = SM64MarioInputs()
-mario_state = SM64MarioState()
-mario_geo = SM64MarioGeometryBuffers()
+mario_inputs = sm64_types.SM64MarioInputs()
+mario_state = sm64_types.SM64MarioState()
 follow_cam = False
 tick_count = 0
 
@@ -213,13 +89,13 @@ base_zoom_distance = None
 
 background_loop = None
 
-SM64_SCALE_FACTOR = 50
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
-    global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
+    global sm64, sm64_mario_id, sm64_scale_factor, original_fps, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
     global last_known_mario_mode, mesh_vertex_offsets, base_zoom_distance
 
-    SM64_SCALE_FACTOR = scale
+    set_scale_factor(scale)
+    sm64_scale_factor = scale
 
     try:
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -250,26 +126,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     dll_path = os.path.join(this_path, 'lib', dll_name)
     sm64 = ct.cdll.LoadLibrary(dll_path)
 
-    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
-    sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(SM64Surface), ct.c_uint32 ]
-    sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
-    sm64.sm64_mario_create.restype = ct.c_int32
-    sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(SM64MarioInputs), ct.POINTER(SM64MarioState), ct.POINTER(SM64MarioGeometryBuffers) ]
-
-    sm64.sm64_audio_init.argtypes = [ct.c_char_p]
-    sm64.sm64_audio_init.restype = None
-    sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
-    sm64.sm64_audio_tick.restype = ct.c_uint32
-    sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
-    sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
-
-    sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
-    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
-
-    sm64.sm64_surface_object_create.argtypes = [ ct.POINTER(SM64SurfaceObject) ]
-    sm64.sm64_surface_object_create.restype = ct.c_uint32
-    sm64.sm64_surface_object_move.argtypes = [ ct.c_uint32, ct.POINTER(SM64ObjectTransform) ]
-    sm64.sm64_surface_object_delete.argtypes = [ ct.c_uint32 ]
+    initialize_sm64_functions()
 
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
@@ -279,7 +136,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     with open(os.path.expanduser(rom_path), 'rb') as file:
         rom_bytes = bytearray(file.read())
         rom_chars = ct.c_char * len(rom_bytes)
-        texture_buff = (ct.c_ubyte * (4 * SM64_TEXTURE_WIDTH * SM64_TEXTURE_HEIGHT))()
+        texture_buff = (ct.c_ubyte * (4 * mesh_helpers.SM64_TEXTURE_WIDTH * mesh_helpers.SM64_TEXTURE_HEIGHT))()
         sm64.sm64_global_init(rom_chars.from_buffer(rom_bytes), texture_buff)
         initialize_all_data(texture_buff)
         sm64.sm64_audio_init(rom_chars.from_buffer(rom_bytes))
@@ -310,9 +167,6 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     sm64.sm64_play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
 
-    sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
-    #sm64.sm64_mario_interact_cap(sm64_mario_id, MARIO_WING_CAP, 0, 1)
-
     if background_loop == None:
         background_loop = BackgroundLoop()
         bpy.app.timers.register(background_loop, first_interval=0.0)
@@ -328,6 +182,32 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     tick_count = 0
 
     return None
+
+def initialize_sm64_functions():
+    global sm64
+
+    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
+    sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(sm64_types.SM64Surface), ct.c_uint32 ]
+    sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
+    sm64.sm64_mario_create.restype = ct.c_int32
+    sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64MarioInputs), ct.POINTER(sm64_types.SM64MarioState), ct.POINTER(sm64_types.SM64MarioGeometryBuffers) ]
+
+    sm64.sm64_audio_init.argtypes = [ct.c_char_p]
+    sm64.sm64_audio_init.restype = None
+    sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
+    sm64.sm64_audio_tick.restype = ct.c_uint32
+    sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
+    sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
+
+    sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
+    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
+
+    sm64.sm64_surface_object_create.argtypes = [ ct.POINTER(sm64_types.SM64SurfaceObject) ]
+    sm64.sm64_surface_object_create.restype = ct.c_uint32
+    sm64.sm64_surface_object_move.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64ObjectTransform) ]
+    sm64.sm64_surface_object_delete.argtypes = [ ct.c_uint32 ]
+
+    sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
 
 def add_cap(capId):
     sm64.sm64_mario_interact_cap(sm64_mario_id, capId, 0, 1)
@@ -430,9 +310,9 @@ def update_follow_camera(delta_time):
         return 0.0
     
     mario_world_pos = mathutils.Vector((
-        origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR,
-        origin_offset.y - mario_state.posZ / SM64_SCALE_FACTOR,
-        origin_offset.z + mario_state.posY / SM64_SCALE_FACTOR
+        origin_offset.x + mario_state.posX / sm64_scale_factor,
+        origin_offset.y - mario_state.posZ / sm64_scale_factor,
+        origin_offset.z + mario_state.posY / sm64_scale_factor
     ))
     camera_target = mario_world_pos + mathutils.Vector(bpy.context.scene.libsm64.camera_shift)
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
@@ -483,10 +363,10 @@ def tick_mario(scene, depsgraph=None):
         rotated_origin = rotation_delta @ moving_object['origin']
         translation_delta = location_relative - rotated_origin
 
-        transform = SM64ObjectTransform(
-            posX = SM64_SCALE_FACTOR * translation_delta.x,
-            posY = SM64_SCALE_FACTOR * translation_delta.z,
-            posZ = -SM64_SCALE_FACTOR * translation_delta.y,
+        transform = sm64_types.SM64ObjectTransform(
+            posX = sm64_scale_factor * translation_delta.x,
+            posY = sm64_scale_factor * translation_delta.z,
+            posZ = -sm64_scale_factor * translation_delta.y,
             eulX = -math.degrees(euler_current.x),
             eulY = -math.degrees(euler_current.y),
             eulZ = -math.degrees(euler_current.z)
@@ -514,24 +394,28 @@ def tick_mario(scene, depsgraph=None):
     update_follow_camera(1.0 / scene.render.fps)
 
     mario_world_pos = mathutils.Vector((
-        origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR,
-        origin_offset.y - mario_state.posZ / SM64_SCALE_FACTOR,
-        origin_offset.z + mario_state.posY / SM64_SCALE_FACTOR
+        origin_offset.x + mario_state.posX / sm64_scale_factor,
+        origin_offset.y - mario_state.posZ / sm64_scale_factor,
+        origin_offset.z + mario_state.posY / sm64_scale_factor
     ))
 
+    # Check if mario is inside any water blocks and set the water level if so.
+    # sm64_set_mario_water_level specifically requires the top of the water block,
+    # which will teleport mario to the top if he enters from the side.
     is_in_water = False
     for obj_name in water_blocks:
         water_block = bpy.data.objects[obj_name]
-        if is_inside_volume(mario_world_pos, water_block):
+        if mesh_helpers.is_inside_volume(mario_world_pos, water_block):
             water_obj = water_block
             z_loc = water_obj.location.z
             z_dim = water_obj.dimensions.z
             z_scale = water_obj.scale.z
 
-            water_level = (z_loc - origin_offset.z + (z_dim/2.0 * z_scale)) * SM64_SCALE_FACTOR
+            water_level = (z_loc - origin_offset.z + (z_dim/2.0 * z_scale)) * sm64_scale_factor
             sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(int(water_level)))
             is_in_water = True
 
+    # If mario is not in water, set the water level to a very low value to ensure he is always above.
     if not is_in_water:
         sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(-10000))
 
@@ -555,145 +439,18 @@ def tick_mario(scene, depsgraph=None):
     target_mesh = bpy.data.meshes.get('libsm64_mario_mesh')
     if target_mesh:
         if tick_count < 15: 
-            update_mesh_data(target_mesh)
+            mesh_helpers.update_mesh_data(target_mesh, origin_offset, mesh_vertex_offsets)
         else:
             ##TODO: Add functionality to determine when a full update is required
             ##      (e.g. switching to flying requires texture updates)
-            update_mesh_data(target_mesh)
-            #update_mesh_data_fast(target_mesh)
+            mesh_helpers.update_mesh_data(target_mesh, origin_offset, mesh_vertex_offsets)
+            #mesh_helpers.update_mesh_data_fast(target_mesh, origin_offset, mesh_vertex_offsets)
 
     tick_count += 1
     return None
 
-def clamp_bounds(val):
-    val = int(val)
-    bounds = 0x7FFF
-    if val < -bounds:
-        return (-bounds, False)
-    if val > bounds:
-        return (bounds, False)
-    return (val, True)
-
-def add_mesh(obj: bpy.types.Object, out):
-    mesh = obj.data
-    mesh.calc_loop_triangles()
-    for tri in cast(List[bpy.types.MeshLoopTriangle], mesh.loop_triangles):
-        out_elem = {}
-        for i in range(3):
-            tri_idx = tri.vertices[i]
-            vx = mesh.vertices[tri_idx].co.x
-            vy = mesh.vertices[tri_idx].co.y
-            vz = mesh.vertices[tri_idx].co.z
-            vworld = obj.matrix_world @ mathutils.Vector((vx, vy, vz, 1))
-            out_elem['v' + str(i) + 'x'] = vworld.x
-            out_elem['v' + str(i) + 'y'] = vworld.y
-            out_elem['v' + str(i) + 'z'] = vworld.z
-
-        out_elem['terrain'] = TERRAIN_TYPES[obj.sm64_terrain_type_dropdown]
-        out_elem['surftype'] = SURFACE_TYPES[obj.sm64_surface_type_dropdown]
-        out.append(out_elem)
-
-def get_surface_array_from_scene():
-    global water_blocks, moving_objects, moving_objects_cache
-
-    scene = bpy.context.window.scene
-    surfaces = []
-    moving_objects = []
-    moving_objects_cache = {}
-    water_blocks = []
-
-    for obj in cast(List[bpy.types.Object], scene.collection.all_objects):
-        # water blocks don't get added to the static surfaces
-        if "water" in obj.name.lower():
-            water_blocks.append(obj.name)
-            continue
-
-        if obj.sm64_surface_type_dropdown == "SURFACE_NOT_SLIPPERY":
-            location, rotation_quat, scale = obj.matrix_world.decompose()
-            obj_surfaces = []
-            add_mesh(obj, obj_surfaces)
-            (surf_obj_array, surf_count) = build_surface_array(obj_surfaces)
-
-            euler = get_sm64_rotation(obj)
-
-            obj_origin = mathutils.Vector((
-                location.x - origin_offset.x,
-                location.y - origin_offset.y,
-                location.z - origin_offset.z,
-            ))
-
-            surface_object = SM64SurfaceObject(
-                transform = SM64ObjectTransform(
-                    posX = obj_origin.x,
-                    posY = obj_origin.z,
-                    posZ = obj_origin.y,
-                    eulX = -math.degrees(euler.x),
-                    eulY = -math.degrees(euler.y),
-                    eulZ = -math.degrees(euler.z)
-                ),
-                surfaceCount = surf_count,
-                surfaces = surf_obj_array
-            )
-
-            objId = sm64.sm64_surface_object_create(surface_object)
-            moving_objects.append({
-                'id': objId,
-                'name': obj.name,
-                'origin': obj_origin.copy(),
-                'rotation': rotation_quat.copy(),
-            })
-            continue
-
-
-        if isinstance(obj.data, bpy.types.Mesh):
-            add_mesh(obj, surfaces)
-
-    (surface_array, j) = build_surface_array(surfaces)
-
-    return (surface_array, j)
-
-def build_surface_array(surfaces):
-    surface_array = (SM64Surface * len(surfaces))()
-    j = 0
-
-    for i in range(len(surfaces)):
-        (v0x, in00) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v0x'] - origin_offset.x))
-        (v0y, in01) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v0z'] - origin_offset.z))
-        (v0z, in02) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v0y'] + origin_offset.y))
-        (v1x, in10) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v1x'] - origin_offset.x))
-        (v1y, in11) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v1z'] - origin_offset.z))
-        (v1z, in12) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v1y'] + origin_offset.y))
-        (v2x, in20) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v2x'] - origin_offset.x))
-        (v2y, in21) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v2z'] - origin_offset.z))
-        (v2z, in22) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v2y'] + origin_offset.y))
-
-        if not in00 and not in01 and not in02:
-            continue
-        if not in10 and not in11 and not in12:
-            continue
-        if not in20 and not in21 and not in22:
-            continue
-
-        surface_array[j].surftype = surfaces[i]['surftype']
-        surface_array[j].force = 0
-        surface_array[j].terrain = surfaces[i]['terrain']
-        surface_array[j].v0x = v0x
-        surface_array[j].v0y = v0y
-        surface_array[j].v0z = v0z
-        surface_array[j].v1x = v1x
-        surface_array[j].v1y = v1y
-        surface_array[j].v1z = v1z
-        surface_array[j].v2x = v2x
-        surface_array[j].v2y = v2y
-        surface_array[j].v2z = v2z
-        j += 1
-
-    return (surface_array, j)
-
-    
-
 def initialize_all_data(texture_buffer):
-    size = SM64_TEXTURE_WIDTH, SM64_TEXTURE_HEIGHT
+    size = mesh_helpers.SM64_TEXTURE_WIDTH, mesh_helpers.SM64_TEXTURE_HEIGHT
 
     if 'libsm64_mario_texture' in bpy.data.images:
         image = bpy.data.images["libsm64_mario_texture"]
@@ -760,8 +517,8 @@ def initialize_all_data(texture_buffer):
 
     mesh = bpy.data.meshes.new('libsm64_mario_mesh')
 
-    total_verts = SM64_GEO_MAX_TRIANGLES * 3
-    total_faces = SM64_GEO_MAX_TRIANGLES
+    total_verts = mesh_helpers.SM64_GEO_MAX_TRIANGLES * 3
+    total_faces = mesh_helpers.SM64_GEO_MAX_TRIANGLES
     total_loops = total_faces * 3
     
     mesh.vertices.add(total_verts)
@@ -786,111 +543,65 @@ def initialize_all_data(texture_buffer):
     mesh.validate(verbose=False)
     mesh.update()
 
-def update_mesh_data(mesh: bpy.types.Mesh):
-    num_tris = mario_geo.numTrianglesUsed
-    num_verts = num_tris * 3
-    
-    coords = get_mesh_coords(mesh)
-    mesh.vertices.foreach_set("co", coords)
 
-    uv_layer = mesh.uv_layers.active
-    if uv_layer and mario_geo.uv_data:
-        uv_data = [0.0] * (len(mesh.loops) * 2)
-        for i in range(num_tris):
-            base = 6 * i
-            l_idx = 3 * i
-            uv_data[2 * (l_idx + 0): 2 * (l_idx + 0) + 2] = [mario_geo.uv_data[base + 0], mario_geo.uv_data[base + 1]]
-            uv_data[2 * (l_idx + 1): 2 * (l_idx + 1) + 2] = [mario_geo.uv_data[base + 2], mario_geo.uv_data[base + 3]]
-            uv_data[2 * (l_idx + 2): 2 * (l_idx + 2) + 2] = [mario_geo.uv_data[base + 4], mario_geo.uv_data[base + 5]]
-        uv_layer.data.foreach_set("uv", uv_data)
+def get_surface_array_from_scene():
+    global water_blocks, moving_objects, moving_objects_cache
 
-    color_attr = mesh.attributes.get("Col")
-    if color_attr and mario_geo.color_data:
-        colors = [1.0] * (len(mesh.loops) * 4)
-        for i in range(num_tris):
-            base_sm64 = 9 * i
-            
-            c0 = (3 * i + 0) * 4
-            colors[c0:c0+3] = [mario_geo.color_data[base_sm64+0], mario_geo.color_data[base_sm64+1], mario_geo.color_data[base_sm64+2]]
-            if num_tris > 752 and i >= num_tris - 8:
-                colors[c0+3] = 0.0
-            
-            c1 = (3 * i + 1) * 4
-            colors[c1:c1+3] = [mario_geo.color_data[base_sm64+3], mario_geo.color_data[base_sm64+4], mario_geo.color_data[base_sm64+5]]
-            if num_tris > 752 and i >= num_tris - 8:
-                colors[c1+3] = 0.0
-            
-            c2 = (3 * i + 2) * 4
-            colors[c2:c2+3] = [mario_geo.color_data[base_sm64+6], mario_geo.color_data[base_sm64+7], mario_geo.color_data[base_sm64+8]]
-            if num_tris > 752 and i >= num_tris - 8:
-                colors[c2+3] = 0.0
-            
-        color_attr.data.foreach_set("color", colors)
+    scene = bpy.context.window.scene
+    surfaces = []
+    moving_objects = []
+    moving_objects_cache = {}
+    water_blocks = []
 
-    mesh.validate(verbose=False)
-    mesh.update()
+    for obj in cast(List[bpy.types.Object], scene.collection.all_objects):
+        # water blocks don't get added to the static surfaces
+        if "water" in obj.name.lower():
+            water_blocks.append(obj.name)
+            continue
+
+        if obj.sm64_surface_type_dropdown == "SURFACE_NOT_SLIPPERY":
+            location, rotation_quat, scale = obj.matrix_world.decompose()
+            obj_surfaces = []
+            mesh_helpers.add_mesh(obj, obj_surfaces)
+            (surf_obj_array, surf_count) = mesh_helpers.build_surface_array(obj_surfaces, origin_offset)
+
+            euler = get_sm64_rotation(obj)
+
+            obj_origin = mathutils.Vector((
+                location.x - origin_offset.x,
+                location.y - origin_offset.y,
+                location.z - origin_offset.z,
+            ))
+
+            surface_object = sm64_types.SM64SurfaceObject(
+                transform = sm64_types.SM64ObjectTransform(
+                    posX = obj_origin.x,
+                    posY = obj_origin.z,
+                    posZ = obj_origin.y,
+                    eulX = -math.degrees(euler.x),
+                    eulY = -math.degrees(euler.y),
+                    eulZ = -math.degrees(euler.z)
+                ),
+                surfaceCount = surf_count,
+                surfaces = surf_obj_array
+            )
+
+            objId = sm64.sm64_surface_object_create(surface_object)
+            moving_objects.append({
+                'id': objId,
+                'name': obj.name,
+                'origin': obj_origin.copy(),
+                'rotation': rotation_quat.copy(),
+            })
+            continue
 
 
-def update_mesh_data_fast(mesh: bpy.types.Mesh):
-    mario_obj = bpy.data.objects.get('LibSM64 Mario')
-    if mario_obj and mario_obj.mode == 'EDIT':
-        return
-    
-    coords = get_mesh_coords(mesh)
+        if isinstance(obj.data, bpy.types.Mesh):
+            mesh_helpers.add_mesh(obj, surfaces)
 
-    mesh.vertices.foreach_set("co", coords)
-    mesh.validate(verbose=False)
-    mesh.update()
+    (surface_array, j) = mesh_helpers.build_surface_array(surfaces, origin_offset)
 
-def get_mesh_coords(mesh: bpy.types.Mesh):
-    num_tris = mario_geo.numTrianglesUsed
-    if num_tris == 0 or len(mesh.vertices) == 0:
-        return
-
-    coords = [0.0] * (len(mesh.vertices) * 3)
-    for i in range(num_tris):
-            base_sm64 = 9 * i
-            base_blender = 9 * i
-            
-            sim_v = []
-            for v in range(3):
-                s_idx = base_sm64 + (v * 3)
-                sim_v.append(mathutils.Vector((
-                    origin_offset.x + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
-                    origin_offset.y - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
-                    origin_offset.z + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
-                )))
-                
-            edge1, edge2 = sim_v[1] - sim_v[0], sim_v[2] - sim_v[0]
-            valid_basis = False
-            
-            if edge1.length > 0.0001 and edge2.length > 0.0001:
-                v_tangent = edge1.normalized()
-                cross_prod = edge1.cross(edge2)
-                if cross_prod.length > 0.0001:
-                    v_normal = cross_prod.normalized()
-                    v_bitangent = v_normal.cross(v_tangent).normalized()
-                    tri_basis = mathutils.Matrix((v_tangent, v_bitangent, v_normal)).transposed()
-                    valid_basis = True
-                    
-            for v in range(3):
-                vert_number = (i * 3) + v
-                final_pos = sim_v[v].copy()
-                
-                if vert_number in mesh_vertex_offsets:
-                    off_x, off_y, off_z, is_local = mesh_vertex_offsets[vert_number]
-                    local_delta_vec = mathutils.Vector((off_x, off_y, off_z))
-                    
-                    if is_local == 1 and valid_basis:
-                        final_pos += tri_basis @ local_delta_vec
-                    else:
-                        final_pos += local_delta_vec
-                
-                b_sub = base_blender + (v * 3)
-                coords[b_sub : b_sub + 3] = final_pos
-
-    return coords
-
+    return (surface_array, j)
 
 def on_mode_change(scene=None):
     global mesh_vertex_offsets, last_known_mario_mode
@@ -936,9 +647,9 @@ def on_mode_change(scene=None):
                     for v in range(3):
                         s_idx = base_sm64 + (v * 3)
                         sim_v.append(mathutils.Vector((
-                            origin_offset.x + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
-                            origin_offset.y - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
-                            origin_offset.z + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
+                            origin_offset.x + mario_geo.position_data[s_idx + 0] / sm64_scale_factor,
+                            origin_offset.y - mario_geo.position_data[s_idx + 2] / sm64_scale_factor,
+                            origin_offset.z + mario_geo.position_data[s_idx + 1] / sm64_scale_factor
                         )))
                     
                     edge1 = sim_v[1] - sim_v[0]
@@ -983,30 +694,3 @@ def on_mode_change(scene=None):
 
 def mario_mode_property_update_callback(self, context):
     bpy.app.timers.register(on_mode_change, first_interval=0.0)
-
-def is_inside_volume(vector, obj):
-    #Transform the world-space vector into the object's local space
-    matrix_invert = obj.matrix_world.inverted()
-    local_vector = matrix_invert @ vector
-
-    ray_destination = local_vector + mathutils.Vector((0, 0, 10000))
-
-    depsgraph = bpy.context.evaluated_depsgraph_get()
-    obj_eval = obj.evaluated_get(depsgraph)
-    bvh = mathutils.bvhtree.BVHTree.FromObject(obj_eval, depsgraph)
-
-    intersections = 0
-    ray_origin = local_vector
-
-    while True:
-        location, normal, index, distance = bvh.ray_cast(ray_origin, ray_destination - ray_origin)
-
-        if location is None:
-            break
-
-        intersections += 1
-        
-        ray_origin = location + (ray_destination - ray_origin).normalized() * 0.0001
-
-    # An odd number of intersections means the point started *inside* the closed volume
-    return (intersections % 2) == 1
