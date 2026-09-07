@@ -26,8 +26,6 @@ SM64_SCALE_FACTOR = 50
 origin_offset = [0.0, 0.0, 0.0]
 original_fps = 0
 
-is_handling_mode_change = False
-
 last_known_mario_mode = "OBJECT"
 mesh_vertex_offsets = {}
 
@@ -210,19 +208,20 @@ mario_state = SM64MarioState()
 mario_geo = SM64MarioGeometryBuffers()
 follow_cam = False
 tick_count = 0
-last_cam_change_tick = -30
 
 music_select = MusicSeqId.SEQ_RANDOM_MUSIC
 
 moving_objects = []
+moving_objects_cache = {}
 water_blocks = []
 
 background_loop = None
 
+SM64_SCALE_FACTOR = 50
+
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam, background_loop
-    global last_known_mario_mode, last_time
-    global music_select
+    global last_known_mario_mode, mesh_vertex_offsets
 
     SM64_SCALE_FACTOR = scale
 
@@ -321,8 +320,6 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         background_loop = BackgroundLoop()
         bpy.app.timers.register(background_loop, first_interval=0.0)
 
-
-    global mesh_vertex_offsets
     mesh_vertex_offsets.clear()
     last_known_mario_mode = 'OBJECT'
 
@@ -332,8 +329,6 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     bpy.app.handlers.depsgraph_update_post.append(mario_mode_property_update_callback)
 
     tick_count = 0
-    
-    last_time = time.time()
 
     return None
 
@@ -351,17 +346,8 @@ def stop_tick_mario():
     sm64 = None
 
 look_sens = 3.0
-current_time = 0.0
-last_time = 0.0
-delta_time = 0.0
 def tick_mario(scene, depsgraph=None):
-    global sm64, sm64_mario_id, mario_state, mario_geo, tick_count, last_cam_change_tick, origin_offset, follow_cam
-    global water_blocks, moving_objects
-    global mario_inputs, current_time, last_time, delta_time, look_sens
-
-    current_time = time.time()
-    delta_time = current_time - last_time
-    last_time = current_time
+    global tick_count
 
     for objId, obj_name, loc_origin, euler_origin in moving_objects:
         obj = bpy.data.objects[obj_name]
@@ -490,7 +476,7 @@ def add_mesh(obj: bpy.types.Object, out):
         out.append(out_elem)
 
 def get_surface_array_from_scene():
-    global origin_offset, water_blocks, moving_objects
+    global water_blocks, moving_objects, moving_objects_cache
 
     scene = bpy.context.window.scene
     surfaces = []
@@ -671,8 +657,6 @@ def initialize_all_data(texture_buffer):
     mesh.update()
 
 def update_mesh_data(mesh: bpy.types.Mesh):
-    global mario_geo, SM64_SCALE_FACTOR
-    
     num_tris = mario_geo.numTrianglesUsed
     num_verts = num_tris * 3
     
@@ -718,8 +702,6 @@ def update_mesh_data(mesh: bpy.types.Mesh):
 
 
 def update_mesh_data_fast(mesh: bpy.types.Mesh):
-    global mario_geo, mario_state, SM64_SCALE_FACTOR
-
     mario_obj = bpy.data.objects.get('LibSM64 Mario')
     if mario_obj and mario_obj.mode == 'EDIT':
         return
@@ -781,7 +763,7 @@ def get_mesh_coords(mesh: bpy.types.Mesh):
 
 
 def on_mode_change(scene=None):
-    global mario_geo, mario_state, SM64_SCALE_FACTOR, origin_offset, mesh_vertex_offset, last_known_mario_mode
+    global mesh_vertex_offsets, last_known_mario_mode
     
     mario_obj = bpy.data.objects.get('LibSM64 Mario')
     if not mario_obj:
