@@ -343,28 +343,55 @@ def stop_tick_mario():
     sm64.sm64_global_terminate()
     sm64 = None
 
+def get_sm64_rotation(obj):
+    blender_rotation = obj.matrix_world.to_quaternion()
+
+    blender_to_sm64 = mathutils.Matrix((
+        (1.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        (0.0, -1.0, 0.0),
+    ))
+    sm64_rotation = (
+        blender_to_sm64
+        @ blender_rotation.to_matrix()
+        @ blender_to_sm64.transposed()
+    )
+
+    return sm64_rotation.to_euler('XYZ')
+
 look_sens = 3.0
 def tick_mario(scene, depsgraph=None):
     global tick_count
 
-    for objId, obj_name, loc_origin, euler_origin in moving_objects:
-        obj = bpy.data.objects[obj_name]
+    for moving_object in moving_objects:
+        obj = bpy.data.objects[moving_object['name']]
         location, rotation_quat, scale = obj.matrix_world.decompose()
-
-        sm64_euler = rotation_quat.to_euler()
-
-        transform = SM64ObjectTransform(
-            posX = SM64_SCALE_FACTOR * (location.x - loc_origin.x),
-            posY = SM64_SCALE_FACTOR * (location.z - loc_origin.z),
-            posZ = SM64_SCALE_FACTOR * (loc_origin.y - location.y),
-            eulX = (-math.degrees(sm64_euler.x) - euler_origin.x),
-            eulY = (-math.degrees(sm64_euler.z) - euler_origin.y),
-            eulZ = (-math.degrees(sm64_euler.y) - euler_origin.z)
+        transform_matrix = (
+            mathutils.Matrix.Translation(location)
+            @ rotation_quat.to_matrix().to_4x4()
         )
 
-        print(f"delta {transform.posX} {transform.posY} {transform.posZ}")
+        euler_current = get_sm64_rotation(obj)
+        location_relative = location - origin_offset
+        rotation_delta = rotation_quat @ moving_object['rotation'].inverted()
+        rotated_origin = rotation_delta @ moving_object['origin']
+        translation_delta = location_relative - rotated_origin
 
-        sm64.sm64_surface_object_move(objId, transform)
+        transform = SM64ObjectTransform(
+            posX = SM64_SCALE_FACTOR * translation_delta.x,
+            posY = SM64_SCALE_FACTOR * translation_delta.z,
+            posZ = -SM64_SCALE_FACTOR * translation_delta.y,
+            eulX = -math.degrees(euler_current.x),
+            eulY = -math.degrees(euler_current.y),
+            eulZ = -math.degrees(euler_current.z)
+        )
+
+        object_id = moving_object['id']
+        cached_matrix = moving_objects_cache.get(object_id)
+        transform_changed = cached_matrix is None or transform_matrix != cached_matrix
+        if transform_changed:
+            sm64.sm64_surface_object_move(object_id, transform)
+            moving_objects_cache[object_id] = transform_matrix.copy()
     
     if not ('LibSM64 Mario' in bpy.data.objects):
         stop_tick_mario()
@@ -479,6 +506,7 @@ def get_surface_array_from_scene():
     scene = bpy.context.window.scene
     surfaces = []
     moving_objects = []
+    moving_objects_cache = {}
     water_blocks = []
 
     for obj in cast(List[bpy.types.Object], scene.collection.all_objects):
@@ -493,23 +521,34 @@ def get_surface_array_from_scene():
             add_mesh(obj, obj_surfaces)
             (surf_obj_array, surf_count) = build_surface_array(obj_surfaces)
 
-            euler = rotation_quat.to_euler()
+            euler = get_sm64_rotation(obj)
+
+            obj_origin = mathutils.Vector((
+                location.x - origin_offset.x,
+                location.y - origin_offset.y,
+                location.z - origin_offset.z,
+            ))
 
             surface_object = SM64SurfaceObject(
                 transform = SM64ObjectTransform(
-                    posX = location.x,
-                    posY = location.z,
-                    posZ = location.y,
-                    eulX = euler.x,
-                    eulY = euler.z,
-                    eulZ = -euler.y
+                    posX = obj_origin.x,
+                    posY = obj_origin.z,
+                    posZ = obj_origin.y,
+                    eulX = -math.degrees(euler.x),
+                    eulY = -math.degrees(euler.y),
+                    eulZ = -math.degrees(euler.z)
                 ),
                 surfaceCount = surf_count,
                 surfaces = surf_obj_array
             )
 
             objId = sm64.sm64_surface_object_create(surface_object)
-            moving_objects.append((objId, obj.name, location.copy(), euler.copy()))
+            moving_objects.append({
+                'id': objId,
+                'name': obj.name,
+                'origin': obj_origin.copy(),
+                'rotation': rotation_quat.copy(),
+            })
             continue
 
 
