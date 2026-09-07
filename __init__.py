@@ -19,6 +19,8 @@ from . import mario
 from .audio_types import MusicSeqId
 from .surface_terrains import SURFACE_TYPES
 from .surface_terrains import TERRAIN_TYPES
+from .input_reader import process_controller_event
+from .input_reader import reset_controller_inputs
 import ctypes
 
 addon_dir = os.path.dirname(os.path.realpath(__file__))
@@ -194,54 +196,7 @@ class ConnectController_OT_Operator(bpy.types.Operator):
 
         if self._event:
             while sdl.SDL_PollEvent(ctypes.byref(self._event)) != 0:
-                # Handle Axis Motion
-                if self._event.type == sdl.SDL_JOYAXISMOTION:
-                    axis_num = self._event.jaxis.axis
-                    raw_val = float(self._event.jaxis.value)
-                    #print(f"Axis {axis_num}: {raw_val}")
-
-                    scaled_val = raw_val / 512.0
-
-                    if abs(scaled_val) < 8.0:
-                        scaled_val = 0.0
-
-                    normalized_val = scaled_val / 64.0
-
-                    match axis_num:
-                        case 0:
-                            mario_inputs.stickX = -normalized_val
-                        case 1:
-                            mario_inputs.stickY = -normalized_val
-                        case 2:
-                            mario_inputs.camLookZ = -normalized_val
-                        case 3:
-                            mario_inputs.camLookX = -normalized_val
-
-                # Handle Button Presses
-                elif self._event.type == sdl.SDL_JOYBUTTONDOWN:
-                    btn_num = self._event.jbutton.button
-                    print(f"Button {btn_num} Pressed")
-
-                    match btn_num:
-                        case 0:
-                            mario_inputs.buttonA = True
-                        case 1:
-                            mario_inputs.buttonB = True
-                        case 2:
-                            mario_inputs.buttonZ = True
-                    
-                # Handle Button Releases
-                elif self._event.type == sdl.SDL_JOYBUTTONUP:
-                    btn_num = self._event.jbutton.button
-                    print(f"Button {btn_num} Released")
-
-                    match btn_num:
-                        case 0:
-                            mario_inputs.buttonA = False
-                        case 1:
-                            mario_inputs.buttonB = False
-                        case 2:
-                            mario_inputs.buttonZ = False
+                process_controller_event(self._event, mario_inputs, sdl)
 
         # Pass event through so normal Blender navigation (mouse pan, zoom) still works
         return {'PASS_THROUGH'}
@@ -273,6 +228,7 @@ class ConnectController_OT_Operator(bpy.types.Operator):
 
         if self._joystick:
             sdl.SDL_JoystickClose(self._joystick)
+        reset_controller_inputs(mario_inputs)
         sdl.SDL_Quit()
         
         print("SDL2 Controller Reader Stopped.")
