@@ -23,7 +23,7 @@ SM64_TEXTURE_HEIGHT = 64
 SM64_GEO_MAX_TRIANGLES = 1024
 SM64_SCALE_FACTOR = 50
 
-origin_offset = [0.0, 0.0, 0.0]
+origin_offset = mathutils.Vector((0.0, 0.0, 0.0))
 original_fps = 0
 
 last_known_mario_mode = "OBJECT"
@@ -233,9 +233,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     follow_cam = camera_follow
 
-    origin_offset[0] = bpy.context.scene.cursor.location.x
-    origin_offset[1] = bpy.context.scene.cursor.location.y
-    origin_offset[2] = bpy.context.scene.cursor.location.z
+    origin_offset = bpy.context.scene.cursor.location.copy()
 
     if 'LibSM64 Mario' in bpy.data.objects:
         bpy.data.objects['LibSM64 Mario'].select_set(True) # Blender 2.8x
@@ -387,9 +385,9 @@ def tick_mario(scene, depsgraph=None):
     cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
 
     mario_world_pos = mathutils.Vector((
-        origin_offset[0] + mario_state.posX / SM64_SCALE_FACTOR,
-        origin_offset[1] - mario_state.posZ / SM64_SCALE_FACTOR,
-        origin_offset[2] + mario_state.posY / SM64_SCALE_FACTOR
+        origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR,
+        origin_offset.y - mario_state.posZ / SM64_SCALE_FACTOR,
+        origin_offset.z + mario_state.posY / SM64_SCALE_FACTOR
     ))
 
     is_in_water = False
@@ -401,7 +399,7 @@ def tick_mario(scene, depsgraph=None):
             z_dim = water_obj.dimensions.z
             z_scale = water_obj.scale.z
 
-            water_level = (z_loc - origin_offset[2] + (z_dim/2.0 * z_scale)) * SM64_SCALE_FACTOR
+            water_level = (z_loc - origin_offset.z + (z_dim/2.0 * z_scale)) * SM64_SCALE_FACTOR
             sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(int(water_level)))
             is_in_water = True
 
@@ -425,9 +423,9 @@ def tick_mario(scene, depsgraph=None):
 
     sm64.sm64_mario_tick(sm64_mario_id, ct.byref(final_mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
-    mario_world_x = origin_offset[0] + mario_state.posX / SM64_SCALE_FACTOR
-    mario_world_y = origin_offset[1] - mario_state.posZ / SM64_SCALE_FACTOR
-    mario_world_z = origin_offset[2] + mario_state.posY / SM64_SCALE_FACTOR
+    mario_world_x = origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR
+    mario_world_y = origin_offset.y - mario_state.posZ / SM64_SCALE_FACTOR
+    mario_world_z = origin_offset.z + mario_state.posY / SM64_SCALE_FACTOR
 
     if follow_cam:
         r3d.view_location.x = mario_world_x + bpy.context.scene.libsm64.camera_shift.x
@@ -527,15 +525,15 @@ def build_surface_array(surfaces):
     j = 0
 
     for i in range(len(surfaces)):
-        (v0x, in00) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v0x'] - origin_offset[0]))
-        (v0y, in01) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v0z'] - origin_offset[2]))
-        (v0z, in02) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v0y'] + origin_offset[1]))
-        (v1x, in10) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v1x'] - origin_offset[0]))
-        (v1y, in11) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v1z'] - origin_offset[2]))
-        (v1z, in12) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v1y'] + origin_offset[1]))
-        (v2x, in20) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v2x'] - origin_offset[0]))
-        (v2y, in21) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v2z'] - origin_offset[2]))
-        (v2z, in22) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v2y'] + origin_offset[1]))
+        (v0x, in00) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v0x'] - origin_offset.x))
+        (v0y, in01) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v0z'] - origin_offset.z))
+        (v0z, in02) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v0y'] + origin_offset.y))
+        (v1x, in10) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v1x'] - origin_offset.x))
+        (v1y, in11) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v1z'] - origin_offset.z))
+        (v1z, in12) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v1y'] + origin_offset.y))
+        (v2x, in20) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v2x'] - origin_offset.x))
+        (v2y, in21) = clamp_bounds(SM64_SCALE_FACTOR * ( surfaces[i]['v2z'] - origin_offset.z))
+        (v2z, in22) = clamp_bounds(SM64_SCALE_FACTOR * (-surfaces[i]['v2y'] + origin_offset.y))
 
         if not in00 and not in01 and not in02:
             continue
@@ -726,9 +724,9 @@ def get_mesh_coords(mesh: bpy.types.Mesh):
             for v in range(3):
                 s_idx = base_sm64 + (v * 3)
                 sim_v.append(mathutils.Vector((
-                    origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
-                    origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
-                    origin_offset[2] + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
+                    origin_offset.x + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
+                    origin_offset.y - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
+                    origin_offset.z + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
                 )))
                 
             edge1, edge2 = sim_v[1] - sim_v[0], sim_v[2] - sim_v[0]
@@ -806,9 +804,9 @@ def on_mode_change(scene=None):
                     for v in range(3):
                         s_idx = base_sm64 + (v * 3)
                         sim_v.append(mathutils.Vector((
-                            origin_offset[0] + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
-                            origin_offset[1] - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
-                            origin_offset[2] + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
+                            origin_offset.x + mario_geo.position_data[s_idx + 0] / SM64_SCALE_FACTOR,
+                            origin_offset.y - mario_geo.position_data[s_idx + 2] / SM64_SCALE_FACTOR,
+                            origin_offset.z + mario_geo.position_data[s_idx + 1] / SM64_SCALE_FACTOR
                         )))
                     
                     edge1 = sim_v[1] - sim_v[0]
