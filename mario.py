@@ -177,16 +177,11 @@ class BackgroundLoop:
             self.frame_count += 1
             self.last_time = current_time
 
-            view3d = None
-            for a in bpy.context.window.screen.areas:
-                if a.type == 'VIEW_3D':
-                    view3d = a
-                    break
-                    
-            if view3d is None or not view3d.spaces:
-                return None
+            r3d = get_camera_r3d()
 
-            r3d = view3d.spaces[0].region_3d
+            if r3d is None:
+                return 0.0
+
             current_euler = r3d.view_rotation.to_euler('XYZ')
             
             new_pitch = max(min(current_euler.x + mario_inputs.camLookX * self.interval * look_sens, math.radians(89)), math.radians(-89))
@@ -198,8 +193,6 @@ class BackgroundLoop:
             update_follow_camera()
 
         return 0.0
-
-
 
 sm64: ct.CDLL = None
 sm64_mario_id = -1
@@ -216,6 +209,7 @@ moving_objects = []
 moving_objects_cache = {}
 water_blocks = []
 follow_camera_distance = None
+base_zoom_distance = None
 
 background_loop = None
 
@@ -223,7 +217,7 @@ SM64_SCALE_FACTOR = 50
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, SM64_SCALE_FACTOR, original_fps, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
-    global last_known_mario_mode, mesh_vertex_offsets
+    global last_known_mario_mode, mesh_vertex_offsets, base_zoom_distance
 
     SM64_SCALE_FACTOR = scale
 
@@ -235,6 +229,8 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     follow_cam = camera_follow
     follow_camera_distance = None
+    camera_r3d = get_camera_r3d()
+    base_zoom_distance = camera_r3d.view_distance if camera_r3d else None
 
     origin_offset = bpy.context.scene.cursor.location.copy()
 
@@ -365,6 +361,10 @@ def get_sm64_rotation(obj):
 CAMERA_CLEARANCE = 0.3
 CAMERA_MIN_DISTANCE = 1.0
 CAMERA_SPHERE_RADIUS = 0.3
+CAMERA_POSITION_INTERPOLATION_SPEED = 10.0
+CAMERA_DISTANCE_INTERPOLATION_SPEED = 14.0
+look_sens = 3.0
+zoom_distance = 5.0
 
 def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
     direction = direction.normalized()
@@ -408,12 +408,7 @@ def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
 
     return max(CAMERA_MIN_DISTANCE, nearest_distance - CAMERA_CLEARANCE)
 
-def update_follow_camera():
-    global follow_camera_distance
-
-    if not follow_cam or 'LibSM64 Mario' not in bpy.data.objects:
-        return
-
+def get_camera_r3d():
     view3d = None
     for area in bpy.context.window.screen.areas:
         if area.type == 'VIEW_3D':
@@ -421,9 +416,19 @@ def update_follow_camera():
             break
 
     if view3d is None or not view3d.spaces:
-        return
+        return None
 
     r3d = view3d.spaces[0].region_3d
+    return r3d
+
+def update_follow_camera():
+    global base_zoom_distance, follow_camera_distance
+
+    r3d = get_camera_r3d()
+
+    if r3d is None:
+        return
+    
     mario_world_pos = mathutils.Vector((
         origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR,
         origin_offset.y - mario_state.posZ / SM64_SCALE_FACTOR,
@@ -432,8 +437,12 @@ def update_follow_camera():
     camera_target = mario_world_pos + mathutils.Vector(bpy.context.scene.libsm64.camera_shift)
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
 
-    if follow_camera_distance is None:
-        follow_camera_distance = r3d.view_distance
+    if base_zoom_distance is None:
+        base_zoom_distance = r3d.view_distance
+    elif follow_camera_distance is not None:
+        user_zoom_delta = r3d.view_distance - follow_camera_distance
+        if abs(user_zoom_delta) > 0.001:
+            base_zoom_distance = max(CAMERA_MIN_DISTANCE, base_zoom_distance + user_zoom_delta)
 
     depsgraph = bpy.context.evaluated_depsgraph_get()
     camera_distance = get_camera_distance(
@@ -441,14 +450,21 @@ def update_follow_camera():
         depsgraph,
         camera_target,
         -cam_forward,
-        follow_camera_distance,
+        base_zoom_distance,
     )
-    r3d.view_location = camera_target
-    r3d.view_distance = camera_distance
+    delta_time = 1.0 / 60.0
+    position_factor = 1.0 - math.exp(-CAMERA_POSITION_INTERPOLATION_SPEED * delta_time)
+    distance_factor = 1.0 - math.exp(-CAMERA_DISTANCE_INTERPOLATION_SPEED * delta_time)
 
-look_sens = 3.0
+    r3d.view_location = r3d.view_location.lerp(camera_target, position_factor)
+    if camera_distance < r3d.view_distance: # If the camera is too far away, snap to the new distance to avoid clipping through walls
+        r3d.view_distance = camera_distance
+    else:
+        r3d.view_distance += (camera_distance - r3d.view_distance) * distance_factor
+    follow_camera_distance = r3d.view_distance
+
 def tick_mario(scene, depsgraph=None):
-    global tick_count, follow_camera_distance
+    global tick_count
 
     if depsgraph is None:
         depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -488,16 +504,11 @@ def tick_mario(scene, depsgraph=None):
         audio.stop_audio_stream()
         return 0
 
-    view3d = None
-    for a in bpy.context.window.screen.areas:
-        if a.type == 'VIEW_3D':
-            view3d = a
-            break
-            
-    if view3d is None or not view3d.spaces:
-        return None
-        
-    r3d = view3d.spaces[0].region_3d
+    r3d = get_camera_r3d()
+
+    if r3d is None:
+        return 0.0
+
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
     cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
 
