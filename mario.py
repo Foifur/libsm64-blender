@@ -162,6 +162,7 @@ class SM64MarioGeometryBuffers(ct.Structure):
     def __del__(self):
         pass
 
+# Specifically handles camera rotation to maintain a consistent framerate for camera rotation, regardless of the framerate of the scene. 
 class BackgroundLoop:
     def __init__(self):
         self.fps = 60
@@ -190,7 +191,6 @@ class BackgroundLoop:
             new_euler = mathutils.Euler((new_pitch, 0.0, new_yaw), 'XYZ')
             
             r3d.view_rotation = new_euler.to_quaternion()
-            update_follow_camera()
 
         return 0.0
 
@@ -421,13 +421,13 @@ def get_camera_r3d():
     r3d = view3d.spaces[0].region_3d
     return r3d
 
-def update_follow_camera():
+def update_follow_camera(delta_time):
     global base_zoom_distance, follow_camera_distance
 
     r3d = get_camera_r3d()
 
     if r3d is None:
-        return
+        return 0.0
     
     mario_world_pos = mathutils.Vector((
         origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR,
@@ -452,7 +452,7 @@ def update_follow_camera():
         -cam_forward,
         base_zoom_distance,
     )
-    delta_time = 1.0 / 60.0
+
     position_factor = 1.0 - math.exp(-CAMERA_POSITION_INTERPOLATION_SPEED * delta_time)
     distance_factor = 1.0 - math.exp(-CAMERA_DISTANCE_INTERPOLATION_SPEED * delta_time)
 
@@ -511,6 +511,7 @@ def tick_mario(scene, depsgraph=None):
 
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
     cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
+    update_follow_camera(1.0 / scene.render.fps)
 
     mario_world_pos = mathutils.Vector((
         origin_offset.x + mario_state.posX / SM64_SCALE_FACTOR,
