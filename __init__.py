@@ -14,14 +14,17 @@ import sys
 import bpy
 import platform
 from .mario import insert_mario
-from .mario import mario_inputs
 from . import mario
+from . import object_properties as obj_props
 from .audio_types import MusicSeqId
 from .surface_terrains import SURFACE_TYPES
 from .surface_terrains import TERRAIN_TYPES
-from .input_reader import process_controller_event
-from .input_reader import reset_controller_inputs
+from .input_reader import process_controller_event, reset_controller_inputs
+from .controller_bindings import bindings as ctrl_bindings
 import ctypes
+from bpy.app.handlers import persistent
+
+active_popup_regions = set()
 
 addon_dir = os.path.dirname(os.path.realpath(__file__))
 libs_path = os.path.join(addon_dir, "lib")
@@ -117,6 +120,7 @@ class Main_PT_Panel(bpy.types.Panel):
         col.operator(ControlMario_OT_Operator.bl_idname, text='Control Mario with keyboard')
         col.label(text="WASD + JKL to move. ESC to stop.")
         col.operator("object.sdl_modal", text="Connect Controller")
+        col.operator("object.controller_bindings_popup_dialog", text="Controller Bindings")
         col.operator(AddWingCap_OT_Operator.bl_idname, text='Add Wing Cap')
         col.operator(AddMetalCap_OT_Operator.bl_idname, text='Add Metal Cap')
 
@@ -179,101 +183,210 @@ class ControlMario_OT_Operator(bpy.types.Operator):
 
         return {'RUNNING_MODAL'}
 
+@persistent
+def auto_connect_controller(dummy):
+    bpy.ops.object.sdl_modal('INVOKE_DEFAULT')
+
 class ConnectController_OT_Operator(bpy.types.Operator):
     """Read SDL2 Controller inputs inside Blender"""
     bl_idname = "object.sdl_modal"
     bl_label = "Start SDL2 Controller Reader"
     
     _timer = None
-    _joystick = None
+    _controller = None
     _event = None
 
+    def _init_sdl_controller(self):
+        sdl.SDL_SetHint(b"SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS", b"1")
+        sdl.SDL_Init(sdl.SDL_INIT_JOYSTICK | sdl.SDL_INIT_GAMECONTROLLER)
+        sdl.SDL_PumpEvents()
+        
+        # Check for connected physical hardware
+        if sdl.SDL_NumJoysticks() <= 0:
+            return None
+        
+        for idx in range(sdl.SDL_NumJoysticks()):
+            if sdl.SDL_IsGameController(idx):
+                return sdl.SDL_GameControllerOpen(idx)
+
+        return None
+
+    def _handle_rebind_logic(self, operator, ev) -> bool:
+        target = rebind_manager.state["target"]
+        is_axis_target = target in controller_bindings.AXIS_INPUTS
+
+        if is_axis_target:
+            # Make sure the axis is moved far enough to count as a rebind
+            if ev.type == sdl.SDL_CONTROLLERAXISMOTION and abs(ev.caxis.value) > 19500:
+                controller_bindings.update_bindings(target, ev.caxis.axis)
+                rebind_manager.finish()
+                return True
+        else:
+            if ev.type == sdl.SDL_CONTROLLERBUTTONDOWN:
+                controller_bindings.update_bindings(target, ev.cbutton.button)
+                rebind_manager.finish()
+                return True
+            
+        return False
+
+
+    def _reset_state(self):
+        self._timer = None
+        self._controller = None
+        self._event = None
+
+    def invoke(self, context, event):
+        return self.execute(context)
+    
     def modal(self, context, event):
-        # Stop tracking instantly if the user presses ESC inside the Blender Viewport
-        if event.type in {'ESC'}:
-            self.cancel(context)
-            return {'CANCELLED'}
+        if not (self._controller and self._event):
+            return {'PASS_THROUGH'}
 
-        if self._event:
-            while sdl.SDL_PollEvent(ctypes.byref(self._event)) != 0:
-                process_controller_event(self._event, mario_inputs, sdl)
+        while sdl.SDL_PollEvent(ctypes.byref(self._event)) != 0:
+            if rebind_manager.state["active"]:
+                if self._handle_rebind_logic(self, self._event):
+                    return {'PASS_THROUGH'}
+                continue # Skip normal processing during rebinding
 
-        # Pass event through so normal Blender navigation (mouse pan, zoom) still works
+            process_controller_event(self._event, sdl)
+
         return {'PASS_THROUGH'}
 
     def execute(self, context):
-        sdl.SDL_Init(sdl.SDL_INIT_JOYSTICK)
-        
-        # Check for connected physical hardware
-        if sdl.SDL_NumJoysticks() > 0:
-            self._joystick = sdl.SDL_JoystickOpen(0)
-            print(f"Connected Controller: {sdl.SDL_JoystickName(self._joystick)}")
-        else:
-            self.report({'WARNING'}, "No controller detected! Connect a device and retry.")
+        if self._controller:
+            self.cancel(context)
+
+        self._reset_state()
+
+        self._controller = self._init_sdl_controller()
+        if not self._controller:
+            self.report({'ERROR'}, "No compatible game controller found or failed to open.")
+            sdl.SDL_Quit()
             return {'CANCELLED'}
 
+        name = sdl.SDL_GameControllerName(self._controller)
+        self.report({'INFO'}, f"Connected Controller: {name}")
+
         self._event = sdl.SDL_Event()
-        
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
         
-        print("SDL2 Controller Reader Started. Press 'ESC' in the 3D Viewport to stop.")
         return {'RUNNING_MODAL'}
 
     def cancel(self, context):
-        wm = context.window_manager
         if self._timer:
-            wm.event_timer_remove(self._timer)
+            context.window_manager.event_timer_remove(self._timer)
 
-        if self._joystick:
-            sdl.SDL_JoystickClose(self._joystick)
-        reset_controller_inputs(mario_inputs)
+        if self._controller:
+            sdl.SDL_GameControllerClose(self._controller)
+
+        self._reset_state()
+        reset_controller_inputs()
         sdl.SDL_Quit()
+
+class OBJECT_OT_controller_bindings_popup_dialog(bpy.types.Operator):
+    """Open a simple popup dialog"""
+    bl_idname = "object.controller_bindings_popup_dialog"
+    bl_label = "Controller Bindings"
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+
+        popup_reg = context.region_popup
+        if popup_reg and popup_reg not in active_popup_regions:
+            active_popup_regions.add(popup_reg)
+            
+        # ── Axes ──
+        layout.label(text="Analog Joystick Axes:")
+        for prop in controller_bindings.AXIS_INPUTS:
+            row = layout.row()
+            row.label(text=controller_bindings.FUNCTIONAL_NAME.get(prop, prop))
+            listening = rebind_manager.state["active"] and rebind_manager.state["target"] == prop
+            if listening:
+                row.label(text="…press an axis…", icon="NONE")
+            else:
+                btn = row.operator("object.rebind_input",
+                                  text=f"Axis {ctrl_bindings[prop]}")
+                btn.target_property = prop
+                btn.is_axis_type = True
+
+        layout.separator()
+
+        # ── Buttons ──
+        layout.label(text="Controller Buttons:")
+        for prop in controller_bindings.BUTTON_INPUTS:
+            row = layout.row()
+            row.label(text=controller_bindings.FUNCTIONAL_NAME.get(prop, prop))
+            listening = rebind_manager.state["active"] and rebind_manager.state["target"] == prop
+            if listening:
+                row.label(text="…press a button…", icon="NONE")
+            else:
+                btn = row.operator("object.rebind_input",
+                                  text=f"Button {ctrl_bindings[prop]}")
+                btn.target_property = prop
+                btn.is_axis_type = False
+
+
+class OBJECT_OT_rebind_input(bpy.types.Operator):
+    """Click to listen for the next SDL input and assign it"""
+    bl_idname = "object.rebind_input"
+    bl_label = ""
+
+    target_property: bpy.props.StringProperty() # type: ignore
+    is_axis_type: bpy.props.BoolProperty(default=False) #  type: ignore
+
+    def execute(self, context):
+        rebind_manager.start(self.target_property)
         
-        print("SDL2 Controller Reader Stopped.")
 
-class OBJECT_PT_terrain_types(bpy.types.Panel):
-    bl_label = "Terrain Type"
-    bl_idname = "OBJECT_PT_terrain_types"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = "object"
+        self.report({'INFO'},
+            f"Waiting for input... (rebinding '{self.target_property}')"
+        )
+        return {'FINISHED'}
 
-    def draw(self, context):
-        layout = self.layout
-        obj = context.object
+    def modal(self, context, event):
+        if event.type in {'ESC'}:
+            if rebind_manager.state["active"]:
+                rebind_manager.finish()
+                return {'PASS_THROUGH'}
+            self.cancel(context)
+            return {'CANCELLED'}
 
-        box = layout.box()
+class RebindManager:
+    def __init__(self):
+        self.state = {
+            "active": False,
+            "target": None
+        }
 
-        box.prop(obj, "sm64_terrain_type_dropdown")
+    def start(self, target: str):
+        self.state["active"] = True
+        self.state["target"] = target
+        bpy.app.timers.register(self.timeout, first_interval=5.0)
 
-        current_name = obj.sm64_terrain_type_dropdown
-        current_hex = TERRAIN_TYPES.get(current_name, "N/A")
+    def finish(self):
+        self.state["active"] = False
+        self.state["target"] = None
 
-        row = box.row()
-        row.label(text=f"Active Hex: {current_hex}")
+        if bpy.app.timers.is_registered(self._timeout):
+            bpy.app.timers.unregister(self._timeout)
 
-class OBJECT_PT_surface_types(bpy.types.Panel):
-    bl_label = "Surface Type"
-    bl_idname = "OBJECT_PT_surface_types"
-    bl_space_type = 'PROPERTIES'
-    bl_region_type = 'WINDOW'
-    bl_context = "object"
+        for region in list(active_popup_regions):
+            region.tag_redraw()
+            region.tag_refresh_ui()
 
-    def draw(self, context):
-        layout = self.layout
-        obj = context.object
-
-        box = layout.box()
-
-        box.prop(obj, "sm64_surface_type_dropdown")
-
-        current_name = obj.sm64_surface_type_dropdown
-        current_hex = SURFACE_TYPES.get(current_name, "N/A")
-
-        row = box.row()
-        row.label(text=f"Active Hex: {current_hex}")
+    def _timeout(self):
+        print("Rebinding timed out.")
+        if self.state["active"]:
+            self.finish()
+        return None
 
 config = {
     'keyboard_control': False
@@ -308,6 +421,7 @@ def process_input(event):
                 input_value[k] = False
 
 
+rebind_manager = RebindManager()
 register_classes, unregister_classes = bpy.utils.register_classes_factory((
     LibSm64Properties,
     LibSm64Preferences,
@@ -317,8 +431,10 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     ConnectController_OT_Operator,
     AddWingCap_OT_Operator,
     AddMetalCap_OT_Operator,
-    OBJECT_PT_terrain_types,
-    OBJECT_PT_surface_types
+    obj_props.OBJECT_PT_terrain_types,
+    obj_props.OBJECT_PT_surface_types,
+    OBJECT_OT_controller_bindings_popup_dialog,
+    OBJECT_OT_rebind_input,     
 ))
 
 def register():
@@ -337,6 +453,7 @@ def register():
 
     register_classes()
     bpy.types.Scene.libsm64 = bpy.props.PointerProperty(type=LibSm64Properties)
+    bpy.app.handlers.load_post.append(auto_connect_controller)
 
 def unregister():
     unregister_classes()
@@ -345,6 +462,9 @@ def unregister():
     del bpy.types.Object.sm64_surface_type_dropdown
 
     del bpy.types.Scene.libsm64
+
+    if auto_connect_controller in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(auto_connect_controller)
 
 def prop_split(layout, data, field, name):
     split = layout.split(factor = 0.5)
