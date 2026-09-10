@@ -38,19 +38,20 @@ def process_controller_event(event, sdl):
 
         normalized_value = scaled_value / 64.0
 
-        if axis_num == 2:
-            mario.mario_inputs.camLookX = normalized_value
-        elif axis_num == 3:
-            mario.mario_inputs.camLookZ = normalized_value
-        else:
-            axis_name = controller_bindings.sdl_axis_to_sm64(axis_num)
-            if axis_name:
-                setattr(mario.mario_inputs, axis_name, -normalized_value)
+        axis_name = controller_bindings.sdl_axis_to_sm64(axis_num)
+        if axis_name:
+            setattr(mario.mario_inputs, axis_name, -normalized_value)
 
     elif event.type == sdl.SDL_CONTROLLERBUTTONDOWN:
         button_name = controller_bindings.sdl_button_to_sm64(event.cbutton.button)
-        if button_name:
+
+        is_mario_input = any(name == button_name for name, _ in mario.mario_inputs._fields_)
+        if is_mario_input:
+            print(f"has {button_name}")
             setattr(mario.mario_inputs, button_name, True)
+        else:
+            print(f"doesn't have {button_name}")
+            handle_client_button(button_name)
 
     elif event.type == sdl.SDL_CONTROLLERBUTTONUP:
         button_name = controller_bindings.sdl_button_to_sm64(event.cbutton.button)
@@ -65,3 +66,13 @@ def reset_controller_inputs():
     mario.mario_inputs.buttonA = False
     mario.mario_inputs.buttonB = False
     mario.mario_inputs.buttonZ = False
+
+def handle_client_button(button_name):
+    print(button_name)
+    match button_name:
+        case "changeCamera":
+            if mario.base_zoom_distance is not None:
+                if mario.base_zoom_distance > 5.0:
+                    mario.base_zoom_distance = 5.0
+                else:
+                    mario.base_zoom_distance = 20.0

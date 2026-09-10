@@ -237,7 +237,7 @@ def get_sm64_rotation(obj):
 
 CAMERA_CLEARANCE = 0.3
 CAMERA_MIN_DISTANCE = 1.0
-CAMERA_SPHERE_RADIUS = 0.3
+CAMERA_SPHERE_RADIUS = 0.75
 CAMERA_POSITION_INTERPOLATION_SPEED = 10.0
 CAMERA_DISTANCE_INTERPOLATION_SPEED = 14.0
 look_sens = 3.0
@@ -283,7 +283,8 @@ def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
             cast_origin += direction * advance
             remaining_distance -= advance
 
-    return max(CAMERA_MIN_DISTANCE, nearest_distance - CAMERA_CLEARANCE)
+    is_colliding = True if nearest_distance < desired_distance else False
+    return (max(CAMERA_MIN_DISTANCE, nearest_distance - CAMERA_CLEARANCE), is_colliding)
 
 def get_camera_r3d():
     view3d = None
@@ -322,7 +323,7 @@ def update_follow_camera(delta_time):
             base_zoom_distance = max(CAMERA_MIN_DISTANCE, base_zoom_distance + user_zoom_delta)
 
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    camera_distance = get_camera_distance(
+    camera_distance, is_colliding = get_camera_distance(
         bpy.context.scene,
         depsgraph,
         camera_target,
@@ -334,10 +335,12 @@ def update_follow_camera(delta_time):
     distance_factor = 1.0 - math.exp(-CAMERA_DISTANCE_INTERPOLATION_SPEED * delta_time)
 
     r3d.view_location = r3d.view_location.lerp(camera_target, position_factor)
-    if camera_distance < r3d.view_distance: # If the camera is too far away, snap to the new distance to avoid clipping through walls
+
+    if is_colliding and camera_distance < r3d.view_distance:
         r3d.view_distance = camera_distance
     else:
         r3d.view_distance += (camera_distance - r3d.view_distance) * distance_factor
+
     follow_camera_distance = r3d.view_distance
 
 def tick_mario(scene, depsgraph=None):

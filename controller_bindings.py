@@ -2,6 +2,7 @@ DEFAULT_BINDINGS = {
     "buttonA":  0,
     "buttonB":  1,
     "buttonZ":  2,
+    "changeCamera": 3,
     "stickX":   0,
     "stickY":   1,
     "camLookX": 2,
@@ -12,6 +13,7 @@ FUNCTIONAL_NAME = {
     "buttonA": "Jump",
     "buttonB": "Punch",
     "buttonZ": "Crouch",
+    "changeCamera": "Change Camera Distance",
     "stickX": "Move X Axis",
     "stickY": "Move Y Axis",
     "camLookX": "Camera Look X Axis",
@@ -19,7 +21,7 @@ FUNCTIONAL_NAME = {
 }
 
 AXIS_INPUTS = tuple(dict.fromkeys(["stickX", "stickY", "camLookX", "camLookZ"]))
-BUTTON_INPUTS = tuple(dict.fromkeys(["buttonA", "buttonB", "buttonZ"]))
+BUTTON_INPUTS = tuple(dict.fromkeys(["buttonA", "buttonB", "buttonZ", "changeCamera"]))
 
 bindings: dict[str, int] = dict(DEFAULT_BINDINGS)
 
