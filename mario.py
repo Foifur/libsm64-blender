@@ -48,6 +48,10 @@ class BackgroundLoop:
         self.last_time = time.perf_counter()
         self.frame_count = 0
 
+        rotation = get_camera_r3d().view_rotation.to_euler('XYZ')
+        self.camera_pitch = rotation.x
+        self.camera_yaw = rotation.z
+
     def __call__(self):
         current_time = time.perf_counter()
         delta = current_time - self.last_time
@@ -61,12 +65,14 @@ class BackgroundLoop:
             if r3d is None:
                 return 0.0
 
-            current_euler = r3d.view_rotation.to_euler('XYZ')
+            delta_pitch = mario_inputs.camLookZ * self.interval * look_sens
+            self.camera_pitch += delta_pitch
+            self.camera_pitch = max(min(self.camera_pitch, math.radians(120)), math.radians(5))
+
+            delta_yaw = mario_inputs.camLookX * self.interval * look_sens
+            self.camera_yaw += delta_yaw
             
-            new_pitch = max(min(current_euler.x - mario_inputs.camLookZ * self.interval * look_sens, math.radians(120)), math.radians(0))
-            new_yaw = current_euler.z - mario_inputs.camLookX * self.interval * look_sens
-            
-            new_euler = mathutils.Euler((new_pitch, 0.0, new_yaw), 'XYZ')
+            new_euler = mathutils.Euler((self.camera_pitch, 0.0, self.camera_yaw), 'XYZ')
             
             r3d.view_rotation = new_euler.to_quaternion()
 
@@ -241,7 +247,6 @@ CAMERA_SPHERE_RADIUS = 0.75
 CAMERA_POSITION_INTERPOLATION_SPEED = 10.0
 CAMERA_DISTANCE_INTERPOLATION_SPEED = 14.0
 look_sens = 3.0
-zoom_distance = 5.0
 
 def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
     direction = direction.normalized()
