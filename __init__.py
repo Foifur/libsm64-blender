@@ -360,6 +360,8 @@ class OBJECT_OT_rebind_input(bpy.types.Operator):
             return {'CANCELLED'}
 
 class RebindManager:
+    _timer = None
+
     def __init__(self):
         self.state = {
             "active": False,
@@ -369,22 +371,23 @@ class RebindManager:
     def start(self, target: str):
         self.state["active"] = True
         self.state["target"] = target
-        bpy.app.timers.register(self.timeout, first_interval=5.0)
+        self._timer = self._timeout
+        bpy.app.timers.register(self._timer, first_interval=5.0)
 
     def finish(self):
         self.state["active"] = False
         self.state["target"] = None
 
-        if bpy.app.timers.is_registered(self._timeout):
-            bpy.app.timers.unregister(self._timeout)
+        if bpy.app.timers.is_registered(self._timer):
+            bpy.app.timers.unregister(self._timer)
 
         for region in list(active_popup_regions):
             region.tag_redraw()
             region.tag_refresh_ui()
 
     def _timeout(self):
-        print("Rebinding timed out.")
         if self.state["active"]:
+            print("Rebinding timed out.")
             self.finish()
         return None
 
