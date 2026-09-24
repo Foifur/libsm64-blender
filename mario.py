@@ -86,8 +86,6 @@ mario_state = sm64_types.SM64MarioState()
 follow_cam = False
 tick_count = 0
 
-music_select = MusicSeqId.SEQ_RANDOM_MUSIC
-
 moving_objects = []
 moving_objects_cache = {}
 water_blocks = []
@@ -189,6 +187,10 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     bpy.app.handlers.frame_change_pre.append(tick_mario)
 
     audio.start_audio_stream(sm64)
+
+    prefs = bpy.context.preferences.addons[__package__].preferences
+    music_select_name = prefs.music_dropdown
+    music_select = MusicSeqId[music_select_name]
 
     if music_select != MusicSeqId.SEQ_NO_MUSIC:
         if music_select == MusicSeqId.SEQ_RANDOM_MUSIC:
