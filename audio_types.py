@@ -16,6 +16,7 @@ SOUND_MARIO_HERE_WE_GO = SOUND_ARG_LOAD(2, 4, 0x0C, 0x80, 8)
 SOUND_MENU_STAR_SOUND_LETS_A_GO = SOUND_ARG_LOAD(7, 0, 0x24, 0xFF, 8) 
 
 class MusicSeqId(IntEnum):
+    SEQ_NO_MUSIC                    = 0xF0
     SEQ_LEVEL_GRASS                 = 0x03               
     SEQ_LEVEL_INSIDE_CASTLE         = 0x04       
     SEQ_LEVEL_WATER                 = 0x05               

@@ -190,8 +190,13 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     audio.start_audio_stream(sm64)
 
-    seqArgs = 0x80 | + (random.choice(list(MusicSeqId)) if music_select == MusicSeqId.SEQ_RANDOM_MUSIC else music_select)
-    sm64.sm64_play_music(0, seqArgs, 0)
+    if music_select != MusicSeqId.SEQ_NO_MUSIC:
+        if music_select == MusicSeqId.SEQ_RANDOM_MUSIC:
+            randomized_music = [s for s in MusicSeqId if s not in {MusicSeqId.SEQ_NO_MUSIC, MusicSeqId.SEQ_RANDOM_MUSIC}]
+            music_select = random.choice(randomized_music)
+
+        seqArgs = 0x80 | music_select
+        sm64.sm64_play_music(0, seqArgs, 0)
 
     sm64.sm64_play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
 
