@@ -16,11 +16,12 @@ import platform
 from .mario import insert_mario
 from . import mario
 from . import object_properties as obj_props
+from . import controller_bindings
 from .audio_types import MusicSeqId
 from .surface_terrains import SURFACE_TYPES
 from .surface_terrains import TERRAIN_TYPES
 from .input_reader import process_controller_event, reset_controller_inputs
-from .controller_bindings import bindings as ctrl_bindings
+from .controller_bindings import get_functional_name
 import ctypes
 from bpy.app.handlers import persistent
 
@@ -70,7 +71,7 @@ class LibSm64Properties(bpy.types.PropertyGroup):
     camera_shift: bpy.props.FloatVectorProperty (
         name='Camera Offset',
         description='Camera Offset from Mario Origin.',
-        default=(0.0, 0.0, 1.0),
+        default=(0.0, 1.0, 1.0),
         soft_min =-10.0,
         soft_max = 10.0,
         step=10,
@@ -85,12 +86,18 @@ class LibSm64Properties(bpy.types.PropertyGroup):
     ) # type: ignore
 
 class LibSm64Preferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
+    bl_idname = __package__
     rom_path: bpy.props.StringProperty(
         name="Path",
         description="Path to an unmodified US SM64 ROM",
         subtype='FILE_PATH',
         default=('c:\\sm64.us.z64' if platform.system() == 'Windows' else '~/sm64.us.z64')
+    ) # type: ignore
+
+    bindings_json: bpy.props.StringProperty(
+        name="Controller Bindings JSON",
+        get=controller_bindings.get_bindings_string,
+        set=controller_bindings.set_bindings_string
     ) # type: ignore
     def draw(self, context):
         layout = self.layout
@@ -307,13 +314,13 @@ class OBJECT_OT_controller_bindings_popup_dialog(bpy.types.Operator):
         layout.label(text="Analog Joystick Axes:")
         for prop in controller_bindings.AXIS_INPUTS:
             row = layout.row()
-            row.label(text=controller_bindings.FUNCTIONAL_NAME.get(prop, prop))
+            row.label(text=get_functional_name(prop))
             listening = rebind_manager.state["active"] and rebind_manager.state["target"] == prop
             if listening:
                 row.label(text="…press an axis…", icon="NONE")
             else:
                 btn = row.operator("object.rebind_input",
-                                  text=f"Axis {ctrl_bindings[prop]}")
+                                  text=f"Axis {controller_bindings.bindings[prop]}")
                 btn.target_property = prop
                 btn.is_axis_type = True
 
@@ -323,19 +330,25 @@ class OBJECT_OT_controller_bindings_popup_dialog(bpy.types.Operator):
         layout.label(text="Controller Buttons:")
         for prop in controller_bindings.BUTTON_INPUTS:
             row = layout.row()
-            row.label(text=controller_bindings.FUNCTIONAL_NAME.get(prop, prop))
+            row.label(text=get_functional_name(prop))
             listening = rebind_manager.state["active"] and rebind_manager.state["target"] == prop
             if listening:
                 row.label(text="…press a button…", icon="NONE")
             else:
                 btn = row.operator("object.rebind_input",
-                                  text=f"Button {ctrl_bindings[prop]}")
+                                  text=f"Button {controller_bindings.bindings[prop]}")
                 btn.target_property = prop
                 btn.is_axis_type = False
+        
+        layout.separator()
 
+        # Reset Bindings
+        row = layout.row()
+        btn = row.operator("object.reset_bindings",
+                           text=f"Reset Bindings to Default")
 
 class OBJECT_OT_rebind_input(bpy.types.Operator):
-    """Click to listen for the next SDL input and assign it"""
+    """Click to rebind"""
     bl_idname = "object.rebind_input"
     bl_label = ""
 
@@ -343,11 +356,12 @@ class OBJECT_OT_rebind_input(bpy.types.Operator):
     is_axis_type: bpy.props.BoolProperty(default=False) #  type: ignore
 
     def execute(self, context):
-        rebind_manager.start(self.target_property)
+        prop = self.target_property
+        rebind_manager.start(prop)
         
 
         self.report({'INFO'},
-            f"Waiting for input... (rebinding '{self.target_property}')"
+            f"Waiting for input... (rebinding '{get_functional_name(prop)}')"
         )
         return {'FINISHED'}
 
@@ -438,6 +452,7 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     obj_props.OBJECT_PT_surface_types,
     OBJECT_OT_controller_bindings_popup_dialog,
     OBJECT_OT_rebind_input,     
+    controller_bindings.OBJECT_OT_Reset_Bindings,
 ))
 
 def register():
@@ -457,6 +472,7 @@ def register():
     register_classes()
     bpy.types.Scene.libsm64 = bpy.props.PointerProperty(type=LibSm64Properties)
     bpy.app.handlers.load_post.append(auto_connect_controller)
+    controller_bindings.load_as_dict(bpy.context.preferences.addons[__package__].preferences)
 
 def unregister():
     unregister_classes()
