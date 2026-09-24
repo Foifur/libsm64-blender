@@ -48,16 +48,12 @@ def make_enum_items():
     return items
 
 def update_music_selection(self, context):
-    selected_string = context.scene.music_dropdown
-    enum_member = MusicSeqId[selected_string]
-    mario.music_select = enum_member.value
+    selected_string = self.music_dropdown
 
-bpy.types.Scene.music_dropdown = bpy.props.EnumProperty(
-    name="Music Select",
-    items=make_enum_items(),
-    update=update_music_selection,
-    default=MusicSeqId.SEQ_RANDOM_MUSIC.name
-)
+    for identifier, name, desc, icon, value in self.bl_rna.properties['music_dropdown'].enum_items_funcs[0](self, context):
+        if identifier == selected_string:
+            mario.music_select = value
+            break
 
 def update_follow_cam(self, context):
     mario.follow_cam = self.camera_follow
@@ -99,6 +95,14 @@ class LibSm64Preferences(bpy.types.AddonPreferences):
         get=controller_bindings.get_bindings_string,
         set=controller_bindings.set_bindings_string
     ) # type: ignore
+
+    music_dropdown: bpy.props.EnumProperty(
+    name="Music Select",
+    items=make_enum_items(),
+    update=update_music_selection,
+    default=MusicSeqId.SEQ_RANDOM_MUSIC.name
+    ) # type: ignore
+
     def draw(self, context):
         layout = self.layout
         col = layout.column()
@@ -115,13 +119,13 @@ class Main_PT_Panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        preferences = context.preferences.addons[__package__].preferences
+        prefs = context.preferences.addons[__package__].preferences
 
         col = layout.column()
         prop_split(col, scene.libsm64, "mario_scale", "Blender to SM64 Scale")
-        col.prop(preferences, "rom_path")
+        col.prop(prefs, "rom_path")
         col.prop(scene.libsm64, "camera_follow")
-        col.prop(scene, "music_dropdown", text = "Choose")
+        col.prop(prefs, "music_dropdown")
         col.operator(InsertMario_OT_Operator.bl_idname, text='Insert Mario')
         col.prop(scene.libsm64, "camera_shift")
         col.operator(ControlMario_OT_Operator.bl_idname, text='Control Mario with keyboard')
