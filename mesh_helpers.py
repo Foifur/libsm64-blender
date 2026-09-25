@@ -1,8 +1,7 @@
 import bpy
 import mathutils
 from typing import cast, List
-from . surface_terrains import SURFACE_TYPES
-from . surface_terrains import TERRAIN_TYPES
+from . surface_terrains import SurfaceTypes, TerrainTypes
 from . sm64_types import SM64Surface, SM64MarioGeometryBuffers
 
 SM64_GEO_MAX_TRIANGLES = 1024
@@ -40,8 +39,8 @@ def add_mesh(obj: bpy.types.Object, out):
             out_elem['v' + str(i) + 'y'] = vworld.y
             out_elem['v' + str(i) + 'z'] = vworld.z
 
-        out_elem['terrain'] = TERRAIN_TYPES[obj.sm64_terrain_type_dropdown]
-        out_elem['surftype'] = SURFACE_TYPES[obj.sm64_surface_type_dropdown]
+        out_elem['terrain'] = getattr(TerrainTypes, obj.sm64_terrain_type_dropdown, TerrainTypes.TERRAIN_GRASS)
+        out_elem['surftype'] = getattr(SurfaceTypes, obj.sm64_surface_type_dropdown, SurfaceTypes.SURFACE_DEFAULT)
         out.append(out_elem)
 
 def build_surface_array(surfaces, origin_offset):

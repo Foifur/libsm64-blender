@@ -16,8 +16,7 @@ from . mesh_helpers import set_scale_factor
 from . import sm64_types
 from .audio_types import MusicSeqId
 from . import audio_stream as audio
-from . surface_terrains import SURFACE_TYPES
-from . surface_terrains import TERRAIN_TYPES
+from . surface_terrains import SurfaceTypes
 
 from .sm64lib import SM64Library
 
@@ -43,8 +42,8 @@ ACT_FLAG_SWIMMING_OR_FLYING     = 0x10000000
 sm64: SM64Library = None
 sm64_mario_id = -1
 
-mario_inputs = sm64_types.SM64MarioInputs()
-mario_state = sm64_types.SM64MarioState()
+mario_inputs: sm64_types.SM64MarioInputs = sm64_types.SM64MarioInputs()
+mario_state: sm64_types.SM64MarioState = sm64_types.SM64MarioState()
 follow_cam = False
 tick_count = 0
 
@@ -192,7 +191,8 @@ CAMERA_POSITION_INTERPOLATION_SPEED = 10.0
 CAMERA_DISTANCE_INTERPOLATION_SPEED = 14.0
 look_sens = 5.0
 
-def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
+def get_camera_distance(scene, target, direction, desired_distance):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
     direction = direction.normalized()
     side = direction.cross(mathutils.Vector((0.0, 0.0, 1.0)))
     if side.length < 0.001:
@@ -227,9 +227,15 @@ def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
                 break
 
             hit_distance = (hit_location - ray_origin).length
-            if hit_object and hit_object.name != 'LibSM64 Mario' and 'water' not in hit_object.name.lower() and hit_object.sm64_surface_type_dropdown is not SURFACE_TYPES["SURFACE_HANGABLE"]:
-                nearest_distance = min(nearest_distance, hit_distance)
-                break
+
+            if hit_object:
+                surface_type = getattr(SurfaceTypes, hit_object.sm64_surface_type_dropdown, SurfaceTypes.SURFACE_DEFAULT)
+
+                no_collision_surfaces = {SurfaceTypes.SURFACE_HANGABLE}
+
+                if hit_object.name != 'LibSM64 Mario' and 'water' not in hit_object.name.lower() and surface_type not in no_collision_surfaces:
+                    nearest_distance = min(nearest_distance, hit_distance)
+                    break
 
             advance = hit_distance + 0.001
             cast_origin += direction * advance
@@ -272,31 +278,35 @@ def update_follow_camera(delta_time):
 def update_camera():
     global rotation, camera_pitch, camera_yaw, base_zoom_distance, follow_camera_distance, look_sens, camera_shift
 
-    interval = 1/60
+    interval = 1/bpy.context.scene.render.fps
 
     r3d = get_camera_r3d()
 
     if r3d is None:
         return 0.0
 
-    delta_pitch = mario_inputs.camLookZ * interval * look_sens
-    camera_pitch += delta_pitch
-    camera_pitch = max(min(camera_pitch, math.radians(110)), math.radians(30))
+    # Rotation code
+    if mario_inputs.camLookX != 0 or mario_inputs.camLookZ != 0:
+        delta_pitch = mario_inputs.camLookZ * interval * look_sens
+        camera_pitch += delta_pitch
+        camera_pitch = max(min(camera_pitch, math.radians(110)), math.radians(30))
 
-    delta_yaw = mario_inputs.camLookX * interval * look_sens
-    camera_yaw += delta_yaw
-    
-    new_euler = mathutils.Euler((camera_pitch, 0.0, camera_yaw), 'XYZ')
+        delta_yaw = mario_inputs.camLookX * interval * look_sens
+        camera_yaw += delta_yaw
+        
+        new_euler = mathutils.Euler((camera_pitch, 0.0, camera_yaw), 'XYZ')
 
-    if follow_cam:
-        r3d.view_rotation = new_euler.to_quaternion()
+        if follow_cam:
+            r3d.view_rotation = new_euler.to_quaternion()
 
+
+    # Collision code
     mario_world_pos = mathutils.Vector((
         origin_offset.x + mario_state.posX / sm64_scale_factor,
         origin_offset.y - mario_state.posZ / sm64_scale_factor,
         origin_offset.z + mario_state.posY / sm64_scale_factor
     ))
-    print(camera_shift)
+
     camera_target = mario_world_pos + r3d.view_rotation @ camera_shift
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
 
@@ -307,10 +317,8 @@ def update_camera():
         if abs(user_zoom_delta) > 0.001:
             base_zoom_distance = max(CAMERA_MIN_DISTANCE, base_zoom_distance + user_zoom_delta)
 
-    depsgraph = bpy.context.evaluated_depsgraph_get()
     camera_distance, is_colliding = get_camera_distance(
         bpy.context.scene,
-        depsgraph,
         camera_target,
         -cam_forward,
         base_zoom_distance,
@@ -552,7 +560,7 @@ def get_surface_array_from_scene():
             water_blocks.append(obj.name)
             continue
             
-        if obj.sm64_surface_type_dropdown == "SURFACE_NOT_SLIPPERY":
+        if obj.sm64_dynamic_object_checkbox:
             location, rotation_quat, scale = obj.matrix_world.decompose()
             obj_surfaces = []
             mesh_helpers.add_mesh(obj, obj_surfaces)

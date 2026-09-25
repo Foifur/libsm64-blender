@@ -18,8 +18,7 @@ from . import mario
 from . import object_properties as obj_props
 from . import controller_bindings
 from .audio_types import MusicSeqId
-from .surface_terrains import SURFACE_TYPES
-from .surface_terrains import TERRAIN_TYPES
+from .surface_terrains import SurfaceTypes, TerrainTypes
 from .input_reader import process_controller_event, reset_controller_inputs
 from .controller_bindings import get_functional_name
 import ctypes
@@ -37,9 +36,9 @@ os.environ["PYSDL2_DLL_PATH"] = libs_path
 
 from .lib import sdl2 as sdl
 
-def make_enum_items():
+def make_enum_items(enum):
     items = []
-    for member in MusicSeqId:
+    for member in enum:
         identifier = member.name
         name = member.name.replace("SEQ_", "").replace("_", " ").title()
         description = f"Sequence ID: {hex(member.value)}"
@@ -86,7 +85,7 @@ class LibSm64Preferences(bpy.types.AddonPreferences):
 
     music_dropdown: bpy.props.EnumProperty(
     name="Music Select",
-    items=make_enum_items(),
+    items=make_enum_items(MusicSeqId),
     update=update_music_selection,
     default=MusicSeqId.SEQ_RANDOM_MUSIC.name
     ) # type: ignore
@@ -115,7 +114,6 @@ class Main_PT_Panel(bpy.types.Panel):
         col.prop(scene.libsm64, "camera_follow")
         col.prop(prefs, "music_dropdown")
         col.operator(InsertMario_OT_Operator.bl_idname, text='Insert Mario')
-        col.prop(scene.libsm64, "camera_shift")
         col.operator(ControlMario_OT_Operator.bl_idname, text='Control Mario with keyboard')
         col.label(text="WASD + JKL to move. ESC to stop.")
         col.operator("object.sdl_modal", text="Connect Controller")
@@ -440,37 +438,23 @@ register_classes, unregister_classes = bpy.utils.register_classes_factory((
     ConnectController_OT_Operator,
     AddWingCap_OT_Operator,
     AddMetalCap_OT_Operator,
-    obj_props.OBJECT_PT_terrain_types,
-    obj_props.OBJECT_PT_surface_types,
+    obj_props.OBJECT_PT_SM64_Settings,
     OBJECT_OT_controller_bindings_popup_dialog,
     OBJECT_OT_rebind_input,     
     controller_bindings.OBJECT_OT_Reset_Bindings,
 ))
 
 def register():
-
-    bpy.types.Object.sm64_terrain_type_dropdown = bpy.props.EnumProperty(
-        name="SM64 Terrain Type",
-        description="Sets the terrain type for Mario to interact with",
-        items=get_terrain_types
-    )
-
-    bpy.types.Object.sm64_surface_type_dropdown = bpy.props.EnumProperty(
-        name="SM64 Surface Type",
-        description="Sets the surface type for Mario to interact with",
-        items=get_surface_types
-    )
-
+    obj_props.register_types()
     register_classes()
+    
     bpy.types.Scene.libsm64 = bpy.props.PointerProperty(type=LibSm64Properties)
     bpy.app.handlers.load_post.append(auto_connect_controller)
     controller_bindings.load_as_dict(bpy.context.preferences.addons[__package__].preferences)
 
 def unregister():
     unregister_classes()
-
-    del bpy.types.Object.sm64_terrain_type_dropdown
-    del bpy.types.Object.sm64_surface_type_dropdown
+    obj_props.unregister_types()
 
     del bpy.types.Scene.libsm64
 
@@ -481,21 +465,3 @@ def prop_split(layout, data, field, name):
     split = layout.split(factor = 0.5)
     split.label(text = name)
     split.prop(data, field, text = '')
-
-def get_terrain_types(self, context):
-    types = []
-
-    for index, (col_type, value) in enumerate(TERRAIN_TYPES.items()):
-        entry = (col_type, col_type, f"Hex Code: {value}", "", index)
-        types.append(entry)
-
-    return types
-
-def get_surface_types(self, context):
-    types = []
-
-    for index, (col_type, value) in enumerate(SURFACE_TYPES.items()):
-        entry = (col_type, col_type, f"Hex Code: {value}", "", index)
-        types.append(entry)
-
-    return types
