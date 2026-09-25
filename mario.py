@@ -4,7 +4,7 @@ import platform
 import ctypes as ct
 import time
 import math
-import mathutils
+import mathutils # type: ignore
 import copy
 import random
 from typing import cast, List

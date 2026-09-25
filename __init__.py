@@ -23,7 +23,7 @@ from .surface_terrains import TERRAIN_TYPES
 from .input_reader import process_controller_event, reset_controller_inputs
 from .controller_bindings import get_functional_name
 import ctypes
-from bpy.app.handlers import persistent
+from bpy.app.handlers import persistent # type: ignore
 
 active_popup_regions = set()
 
