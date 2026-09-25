@@ -101,6 +101,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
     set_scale_factor(scale)
     sm64_scale_factor = scale
+    bpy.context.scene.frame_set(0)
 
     try:
         bpy.ops.object.mode_set(mode='OBJECT')
