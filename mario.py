@@ -91,9 +91,31 @@ moving_objects_cache = {}
 water_blocks = []
 follow_camera_distance = None
 base_zoom_distance = None
+def initialize_sm64_functions():
+    global sm64
+    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
+    sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(sm64_types.SM64Surface), ct.c_uint32 ]
+    sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
+    sm64.sm64_mario_create.restype = ct.c_int32
+    sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64MarioInputs), ct.POINTER(sm64_types.SM64MarioState), ct.POINTER(sm64_types.SM64MarioGeometryBuffers) ]
+
+    sm64.sm64_audio_init.argtypes = [ct.c_char_p]
+    sm64.sm64_audio_init.restype = None
+    sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
+    sm64.sm64_audio_tick.restype = ct.c_uint32
+    sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
+    sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
 
 background_loop = None
+    sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
+    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
 
+    sm64.sm64_surface_object_create.argtypes = [ ct.POINTER(sm64_types.SM64SurfaceObject) ]
+    sm64.sm64_surface_object_create.restype = ct.c_uint32
+    sm64.sm64_surface_object_move.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64ObjectTransform) ]
+    sm64.sm64_surface_object_delete.argtypes = [ ct.c_uint32 ]
+
+    sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, sm64_scale_factor, original_fps, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
@@ -132,28 +154,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     dll_path = os.path.join(this_path, 'lib', dll_name)
     sm64 = ct.cdll.LoadLibrary(dll_path)
 
-    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
-    sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(sm64_types.SM64Surface), ct.c_uint32 ]
-    sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
-    sm64.sm64_mario_create.restype = ct.c_int32
-    sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64MarioInputs), ct.POINTER(sm64_types.SM64MarioState), ct.POINTER(sm64_types.SM64MarioGeometryBuffers) ]
-
-    sm64.sm64_audio_init.argtypes = [ct.c_char_p]
-    sm64.sm64_audio_init.restype = None
-    sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
-    sm64.sm64_audio_tick.restype = ct.c_uint32
-    sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
-    sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
-
-    sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
-    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
-
-    sm64.sm64_surface_object_create.argtypes = [ ct.POINTER(sm64_types.SM64SurfaceObject) ]
-    sm64.sm64_surface_object_create.restype = ct.c_uint32
-    sm64.sm64_surface_object_move.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64ObjectTransform) ]
-    sm64.sm64_surface_object_delete.argtypes = [ ct.c_uint32 ]
-
-    sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
+    initialize_sm64_functions()
 
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
