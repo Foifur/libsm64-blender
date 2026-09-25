@@ -19,6 +19,8 @@ from . import audio_stream as audio
 from . surface_terrains import SURFACE_TYPES
 from . surface_terrains import TERRAIN_TYPES
 
+from .sm64lib import SM64Library
+
 if platform.system() == 'Windows':
     from . input_reader import sample_input_reader
 
@@ -38,7 +40,7 @@ MARIO_CAPS = (MARIO_NORMAL_CAP | MARIO_SPECIAL_CAPS)
 ACT_FLAG_SWIMMING               = 0x00002000
 ACT_FLAG_SWIMMING_OR_FLYING     = 0x10000000
 
-sm64: ct.CDLL = None
+sm64: SM64Library = None
 sm64_mario_id = -1
 
 mario_inputs = sm64_types.SM64MarioInputs()
@@ -56,31 +58,6 @@ camera_shift = mathutils.Vector((0.0, 1.5, 2.0))
 rotation = None
 camera_pitch = None
 camera_yaw = None
-
-def initialize_sm64_functions():
-    global sm64
-    sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
-    sm64.sm64_static_surfaces_load.argtypes = [ ct.POINTER(sm64_types.SM64Surface), ct.c_uint32 ]
-    sm64.sm64_mario_create.argtypes = [ ct.c_float, ct.c_float, ct.c_float ]
-    sm64.sm64_mario_create.restype = ct.c_int32
-    sm64.sm64_mario_tick.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64MarioInputs), ct.POINTER(sm64_types.SM64MarioState), ct.POINTER(sm64_types.SM64MarioGeometryBuffers) ]
-
-    sm64.sm64_audio_init.argtypes = [ct.c_char_p]
-    sm64.sm64_audio_init.restype = None
-    sm64.sm64_audio_tick.argtypes = [ ct.c_uint32, ct.c_uint32, ct.POINTER(ct.c_int16)]
-    sm64.sm64_audio_tick.restype = ct.c_uint32
-    sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
-    sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
-
-    sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
-    sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
-
-    sm64.sm64_surface_object_create.argtypes = [ ct.POINTER(sm64_types.SM64SurfaceObject) ]
-    sm64.sm64_surface_object_create.restype = ct.c_uint32
-    sm64.sm64_surface_object_move.argtypes = [ ct.c_uint32, ct.POINTER(sm64_types.SM64ObjectTransform) ]
-    sm64.sm64_surface_object_delete.argtypes = [ ct.c_uint32 ]
-
-    sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     global sm64, sm64_mario_id, sm64_scale_factor, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
@@ -119,12 +96,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         except:
             pass
 
-    this_path = os.path.dirname(os.path.realpath(__file__))
-    dll_name = 'sm64.dll' if platform.system() == 'Windows' else 'libsm64.so'
-    dll_path = os.path.join(this_path, 'lib', dll_name)
-    sm64 = ct.cdll.LoadLibrary(dll_path)
-
-    initialize_sm64_functions()
+    sm64 = SM64Library()
 
     if ('libsm64_mario_mesh' in bpy.data.meshes):
         old_mesh = bpy.data.meshes['libsm64_mario_mesh']
@@ -135,18 +107,18 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         rom_bytes = bytearray(file.read())
         rom_chars = ct.c_char * len(rom_bytes)
         texture_buff = (ct.c_ubyte * (4 * mesh_helpers.SM64_TEXTURE_WIDTH * mesh_helpers.SM64_TEXTURE_HEIGHT))()
-        sm64.sm64_global_init(rom_chars.from_buffer(rom_bytes), texture_buff)
+        sm64.global_init(rom_chars.from_buffer(rom_bytes), texture_buff)
         initialize_all_data(texture_buff)
-        sm64.sm64_audio_init(rom_chars.from_buffer(rom_bytes))
+        sm64.audio_init(rom_chars.from_buffer(rom_bytes))
 
     (surface_array, surface_array_len) = get_surface_array_from_scene()
 
-    sm64.sm64_static_surfaces_load(surface_array, surface_array_len)
+    sm64.static_surfaces_load(surface_array, surface_array_len)
 
-    sm64_mario_id = sm64.sm64_mario_create(0, 0, 0)
+    sm64_mario_id = sm64.mario_create(0, 0, 0)
 
     if sm64_mario_id < 0:
-        sm64.sm64_global_terminate()
+        sm64.global_terminate()
         sm64 = None
         return "There is no ground under the 3D cursor where mario will spawn"
 
@@ -168,9 +140,9 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
             music_select = random.choice(randomized_music)
 
         seqArgs = 0x80 | music_select
-        sm64.sm64_play_music(0, seqArgs, 0)
+        sm64.play_music(0, seqArgs, 0)
 
-    sm64.sm64_play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
+    sm64.play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
 
     mesh_vertex_offsets.clear()
     last_known_mario_mode = 'OBJECT'
@@ -186,7 +158,7 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
 
 
 def add_cap(capId):
-    sm64.sm64_mario_interact_cap(sm64_mario_id, capId, 0, 1)
+    sm64.mario_interact_cap(sm64_mario_id, capId, 0, 1)
 
 def stop_tick_mario():
     global sm64, sm64_mario_id
@@ -194,7 +166,7 @@ def stop_tick_mario():
 
     bpy.ops.screen.animation_cancel()
     sm64_mario_id = -1
-    sm64.sm64_global_terminate()
+    sm64.global_terminate()
     sm64 = None
 
 def get_sm64_rotation(obj):
@@ -397,7 +369,7 @@ def tick_mario(scene, depsgraph=None):
         cached_matrix = moving_objects_cache.get(object_id)
         transform_changed = cached_matrix is None or transform_matrix != cached_matrix
         if transform_changed:
-            sm64.sm64_surface_object_move(object_id, transform)
+            sm64.surface_object_move(object_id, transform)
             moving_objects_cache[object_id] = transform_matrix.copy()
     
     if not ('LibSM64 Mario' in bpy.data.objects):
@@ -434,12 +406,12 @@ def tick_mario(scene, depsgraph=None):
             z_scale = water_obj.scale.z
 
             water_level = (z_loc - origin_offset.z + (z_dim/2.0 * z_scale)) * sm64_scale_factor
-            sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(int(water_level)))
+            sm64.set_mario_water_level(sm64_mario_id, ct.c_int(int(water_level)))
             is_in_water = True
 
     # If mario is not in water, set the water level to a very low value to ensure he is always above.
     if not is_in_water:
-        sm64.sm64_set_mario_water_level(sm64_mario_id, ct.c_int(-10000))
+        sm64.set_mario_water_level(sm64_mario_id, ct.c_int(-10000))
 
     delta_vec = cam_world_pos - mario_world_pos
     
@@ -456,7 +428,7 @@ def tick_mario(scene, depsgraph=None):
         final_mario_inputs.stickX *= -1
         final_mario_inputs.stickY *= -1
 
-    sm64.sm64_mario_tick(sm64_mario_id, ct.byref(final_mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
+    sm64.mario_tick(sm64_mario_id, ct.byref(final_mario_inputs), ct.byref(mario_state), ct.byref(mario_geo))
 
     target_mesh = bpy.data.meshes.get('libsm64_mario_mesh')
     if target_mesh:
@@ -607,7 +579,7 @@ def get_surface_array_from_scene():
                 surfaces = surf_obj_array
             )
 
-            objId = sm64.sm64_surface_object_create(surface_object)
+            objId = sm64.surface_object_create(surface_object)
             moving_objects.append({
                 'id': objId,
                 'name': obj.name,

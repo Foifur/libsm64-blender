@@ -1,6 +1,7 @@
 import threading
 import ctypes as ct
 from enum import IntEnum
+from .sm64lib import SM64Library
 
 SAMPLE_RATE = 32000
 CHANNELS = 2
@@ -42,7 +43,7 @@ class AudioStreamState:
         self.headers = [WAVEHDR() for _ in range(POOL_SIZE)]
         self.playback_thread = None
 
-sm64 = None
+sm64: SM64Library = None
 winmm = ct.windll.winmm
 _audio = None
 
@@ -69,7 +70,7 @@ def tick_audio(audio):
             break
             
         buffer_ptr = pre_cast_buffers[buf_idx]
-        samples_per_pass = sm64.sm64_audio_tick(1024, 2048, buffer_ptr)
+        samples_per_pass = sm64.audio_tick(1024, 2048, buffer_ptr)
 
         if samples_per_pass > 0:
             total_elements = samples_per_pass * 4 
