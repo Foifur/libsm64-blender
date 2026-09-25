@@ -23,7 +23,6 @@ if platform.system() == 'Windows':
     from . input_reader import sample_input_reader
 
 origin_offset = mathutils.Vector((0.0, 0.0, 0.0))
-original_fps = 0
 
 last_known_mario_mode = "OBJECT"
 mesh_vertex_offsets = {}
@@ -39,45 +38,6 @@ MARIO_CAPS = (MARIO_NORMAL_CAP | MARIO_SPECIAL_CAPS)
 ACT_FLAG_SWIMMING               = 0x00002000
 ACT_FLAG_SWIMMING_OR_FLYING     = 0x10000000
 
-
-# Specifically handles camera rotation to maintain a consistent framerate for camera rotation, regardless of the framerate of the scene. 
-class BackgroundLoop:
-    def __init__(self):
-        self.fps = 60
-        self.interval = 1.0 / self.fps
-        self.last_time = time.perf_counter()
-        self.frame_count = 0
-
-        rotation = get_camera_r3d().view_rotation.to_euler('XYZ')
-        self.camera_pitch = rotation.x
-        self.camera_yaw = rotation.z
-
-    def __call__(self):
-        current_time = time.perf_counter()
-        delta = current_time - self.last_time
-
-        if delta >= self.interval:
-            self.frame_count += 1
-            self.last_time = current_time
-
-            r3d = get_camera_r3d()
-
-            if r3d is None:
-                return 0.0
-
-            delta_pitch = mario_inputs.camLookZ * self.interval * look_sens
-            self.camera_pitch += delta_pitch
-            self.camera_pitch = max(min(self.camera_pitch, math.radians(120)), math.radians(5))
-
-            delta_yaw = mario_inputs.camLookX * self.interval * look_sens
-            self.camera_yaw += delta_yaw
-            
-            new_euler = mathutils.Euler((self.camera_pitch, 0.0, self.camera_yaw), 'XYZ')
-            
-            r3d.view_rotation = new_euler.to_quaternion()
-
-        return 0.0
-
 sm64: ct.CDLL = None
 sm64_mario_id = -1
 
@@ -91,6 +51,12 @@ moving_objects_cache = {}
 water_blocks = []
 follow_camera_distance = None
 base_zoom_distance = None
+camera_shift = mathutils.Vector((0.0, 1.5, 2.0))
+
+rotation = None
+camera_pitch = None
+camera_yaw = None
+
 def initialize_sm64_functions():
     global sm64
     sm64.sm64_global_init.argtypes = [ ct.c_char_p, ct.POINTER(ct.c_ubyte) ]
@@ -106,7 +72,6 @@ def initialize_sm64_functions():
     sm64.sm64_play_music.argtypes = [ ct.c_uint8, ct.c_uint16, ct.c_uint16 ]
     sm64.sm64_play_sound.argtypes = [ ct.c_int32, ct.POINTER(ct.c_float) ]
 
-background_loop = None
     sm64.sm64_set_mario_action.argtypes = [ ct.c_int32, ct.c_uint32 ]
     sm64.sm64_set_mario_water_level.argtypes = [ ct.c_int32, ct.c_int ]
 
@@ -118,8 +83,9 @@ background_loop = None
     sm64.sm64_mario_interact_cap.argtypes = [ ct.c_int32, ct.c_uint32, ct.c_uint16, ct.c_uint8 ]
 
 def insert_mario(rom_path: str, scale: float, camera_follow: bool):
-    global sm64, sm64_mario_id, sm64_scale_factor, original_fps, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
+    global sm64, sm64_mario_id, sm64_scale_factor, tick_count, origin_offset, follow_cam, background_loop, follow_camera_distance
     global last_known_mario_mode, mesh_vertex_offsets, base_zoom_distance
+    global rotation, camera_pitch, camera_yaw
 
     set_scale_factor(scale)
     sm64_scale_factor = scale
@@ -135,6 +101,10 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     follow_camera_distance = None
     camera_r3d = get_camera_r3d()
     base_zoom_distance = camera_r3d.view_distance if camera_r3d else None
+
+    rotation = camera_r3d.view_rotation.to_euler('XYZ')
+    camera_pitch = rotation.x
+    camera_yaw = rotation.z
 
     origin_offset = bpy.context.scene.cursor.location.copy()
 
@@ -183,10 +153,8 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
     mario_obj = bpy.data.objects.new('LibSM64 Mario', bpy.data.meshes['libsm64_mario_mesh'])
     bpy.context.scene.collection.objects.link(mario_obj)
 
-    original_fps = bpy.context.scene.render.fps
-    bpy.context.scene.render.fps = 30
     bpy.ops.screen.animation_play()
-    bpy.app.handlers.frame_change_pre.append(tick_mario)
+    bpy.app.handlers.frame_change_pre.append(tick_blender)
 
     audio.start_audio_stream(sm64)
 
@@ -203,10 +171,6 @@ def insert_mario(rom_path: str, scale: float, camera_follow: bool):
         sm64.sm64_play_music(0, seqArgs, 0)
 
     sm64.sm64_play_sound(audio_types.SOUND_MENU_STAR_SOUND_LETS_A_GO, ct.c_float(0.0))
-
-    if background_loop == None:
-        background_loop = BackgroundLoop()
-        bpy.app.timers.register(background_loop, first_interval=0.0)
 
     mesh_vertex_offsets.clear()
     last_known_mario_mode = 'OBJECT'
@@ -225,9 +189,8 @@ def add_cap(capId):
     sm64.sm64_mario_interact_cap(sm64_mario_id, capId, 0, 1)
 
 def stop_tick_mario():
-    global sm64, sm64_mario_id, original_fps
+    global sm64, sm64_mario_id
     bpy.app.handlers.frame_change_pre.clear()
-    bpy.context.scene.render.fps = original_fps
 
     bpy.ops.screen.animation_cancel()
     sm64_mario_id = -1
@@ -251,11 +214,11 @@ def get_sm64_rotation(obj):
     return sm64_rotation.to_euler('XYZ')
 
 CAMERA_CLEARANCE = 0.3
-CAMERA_MIN_DISTANCE = 1.0
-CAMERA_SPHERE_RADIUS = 0.75
+CAMERA_MIN_DISTANCE = 0.01
+CAMERA_SPHERE_RADIUS = 0.3
 CAMERA_POSITION_INTERPOLATION_SPEED = 10.0
 CAMERA_DISTANCE_INTERPOLATION_SPEED = 14.0
-look_sens = 3.0
+look_sens = 5.0
 
 def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
     direction = direction.normalized()
@@ -265,12 +228,15 @@ def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
     side.normalize()
     up = side.cross(direction).normalized()
 
+    vertical_factor = abs(direction.dot(mathutils.Vector((0, 0, 1))))
+    current_spread_multiplier = 1.0 - vertical_factor
+
     ray_origins = [
         target,
-        target + side * CAMERA_SPHERE_RADIUS,
-        target - side * CAMERA_SPHERE_RADIUS,
-        target + up * CAMERA_SPHERE_RADIUS,
-        target - up * CAMERA_SPHERE_RADIUS,
+        target + side * CAMERA_SPHERE_RADIUS * current_spread_multiplier,
+        target - side * CAMERA_SPHERE_RADIUS * current_spread_multiplier,
+        target + up * CAMERA_SPHERE_RADIUS * current_spread_multiplier,
+        target - up * CAMERA_SPHERE_RADIUS * current_spread_multiplier,
     ]
     nearest_distance = desired_distance
 
@@ -289,7 +255,7 @@ def get_camera_distance(scene, depsgraph, target, direction, desired_distance):
                 break
 
             hit_distance = (hit_location - ray_origin).length
-            if hit_object and hit_object.name != 'LibSM64 Mario' and 'water' not in hit_object.name.lower():
+            if hit_object and hit_object.name != 'LibSM64 Mario' and 'water' not in hit_object.name.lower() and hit_object.sm64_surface_type_dropdown is not SURFACE_TYPES["SURFACE_HANGABLE"]:
                 nearest_distance = min(nearest_distance, hit_distance)
                 break
 
@@ -326,7 +292,40 @@ def update_follow_camera(delta_time):
         origin_offset.y - mario_state.posZ / sm64_scale_factor,
         origin_offset.z + mario_state.posY / sm64_scale_factor
     ))
-    camera_target = mario_world_pos + mathutils.Vector(bpy.context.scene.libsm64.camera_shift)
+    camera_target = mario_world_pos + mathutils.Vector((0, 0, 1))
+
+    position_factor = 1.0 - math.exp(-CAMERA_POSITION_INTERPOLATION_SPEED * delta_time)
+    r3d.view_location = r3d.view_location.lerp(camera_target, position_factor)
+
+def update_camera():
+    global rotation, camera_pitch, camera_yaw, base_zoom_distance, follow_camera_distance, look_sens, camera_shift
+
+    interval = 1/60
+
+    r3d = get_camera_r3d()
+
+    if r3d is None:
+        return 0.0
+
+    delta_pitch = mario_inputs.camLookZ * interval * look_sens
+    camera_pitch += delta_pitch
+    camera_pitch = max(min(camera_pitch, math.radians(110)), math.radians(30))
+
+    delta_yaw = mario_inputs.camLookX * interval * look_sens
+    camera_yaw += delta_yaw
+    
+    new_euler = mathutils.Euler((camera_pitch, 0.0, camera_yaw), 'XYZ')
+
+    if follow_cam:
+        r3d.view_rotation = new_euler.to_quaternion()
+
+    mario_world_pos = mathutils.Vector((
+        origin_offset.x + mario_state.posX / sm64_scale_factor,
+        origin_offset.y - mario_state.posZ / sm64_scale_factor,
+        origin_offset.z + mario_state.posY / sm64_scale_factor
+    ))
+    print(camera_shift)
+    camera_target = mario_world_pos + r3d.view_rotation @ camera_shift
     cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
 
     if base_zoom_distance is None:
@@ -344,11 +343,7 @@ def update_follow_camera(delta_time):
         -cam_forward,
         base_zoom_distance,
     )
-
-    position_factor = 1.0 - math.exp(-CAMERA_POSITION_INTERPOLATION_SPEED * delta_time)
-    distance_factor = 1.0 - math.exp(-CAMERA_DISTANCE_INTERPOLATION_SPEED * delta_time)
-
-    r3d.view_location = r3d.view_location.lerp(camera_target, position_factor)
+    distance_factor = 1.0 - math.exp(-CAMERA_DISTANCE_INTERPOLATION_SPEED * interval)
 
     if is_colliding and camera_distance < r3d.view_distance:
         r3d.view_distance = camera_distance
@@ -356,6 +351,18 @@ def update_follow_camera(delta_time):
         r3d.view_distance += (camera_distance - r3d.view_distance) * distance_factor
 
     follow_camera_distance = r3d.view_distance
+
+
+def tick_blender(scene, depsgraph=None):
+    global tick_count
+    frame_interval = max(1, bpy.context.scene.render.fps // 30)
+
+    update_camera()
+    if tick_count % frame_interval == 0:
+        tick_mario(scene, depsgraph)
+
+    tick_count += 1
+    return None
 
 def tick_mario(scene, depsgraph=None):
     global tick_count
@@ -398,20 +405,21 @@ def tick_mario(scene, depsgraph=None):
         audio.stop_audio_stream()
         return 0
 
-    r3d = get_camera_r3d()
+    if follow_cam:
+        r3d = get_camera_r3d()
 
-    if r3d is None:
-        return 0.0
+        if r3d is None:
+            return 0.0
 
-    cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
-    cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
-    update_follow_camera(1.0 / scene.render.fps)
+        cam_forward = r3d.view_rotation @ mathutils.Vector((0.0, 0.0, -1.0))
+        cam_world_pos = r3d.view_location - (cam_forward * r3d.view_distance)
+        update_follow_camera(1.0 / scene.render.fps)
 
-    mario_world_pos = mathutils.Vector((
-        origin_offset.x + mario_state.posX / sm64_scale_factor,
-        origin_offset.y - mario_state.posZ / sm64_scale_factor,
-        origin_offset.z + mario_state.posY / sm64_scale_factor
-    ))
+        mario_world_pos = mathutils.Vector((
+            origin_offset.x + mario_state.posX / sm64_scale_factor,
+            origin_offset.y - mario_state.posZ / sm64_scale_factor,
+            origin_offset.z + mario_state.posY / sm64_scale_factor
+        ))
 
     # Check if mario is inside any water blocks and set the water level if so.
     # sm64_set_mario_water_level specifically requires the top of the water block,
@@ -438,7 +446,7 @@ def tick_mario(scene, depsgraph=None):
     if delta_vec.length > 0.001:
         delta_vec.normalize()
 
-    #sample_input_reader(mario_inputs)
+    sample_input_reader()
 
     final_mario_inputs = copy.copy(mario_inputs)
     final_mario_inputs.camLookX = delta_vec.x
@@ -460,7 +468,6 @@ def tick_mario(scene, depsgraph=None):
             mesh_helpers.update_mesh_data(target_mesh, origin_offset, mesh_vertex_offsets)
             #mesh_helpers.update_mesh_data_fast(target_mesh, origin_offset, mesh_vertex_offsets)
 
-    tick_count += 1
     return None
 
 def initialize_all_data(texture_buffer):
@@ -572,7 +579,7 @@ def get_surface_array_from_scene():
         if "water" in obj.name.lower():
             water_blocks.append(obj.name)
             continue
-
+            
         if obj.sm64_surface_type_dropdown == "SURFACE_NOT_SLIPPERY":
             location, rotation_quat, scale = obj.matrix_world.decompose()
             obj_surfaces = []

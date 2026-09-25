@@ -72,7 +72,7 @@ def handle_client_button(button_name):
     match button_name:
         case "changeCamera":
             if mario.base_zoom_distance is not None:
-                if mario.base_zoom_distance > 5.0:
-                    mario.base_zoom_distance = 5.0
+                if mario.base_zoom_distance > 8.0:
+                    mario.base_zoom_distance = 8.0
                 else:
                     mario.base_zoom_distance = 20.0

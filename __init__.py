@@ -64,18 +64,6 @@ class LibSm64Properties(bpy.types.PropertyGroup):
         default=True,
         update=update_follow_cam
     ) # type: ignore
-    camera_shift: bpy.props.FloatVectorProperty (
-        name='Camera Offset',
-        description='Camera Offset from Mario Origin.',
-        default=(0.0, 1.0, 1.0),
-        soft_min =-10.0,
-        soft_max = 10.0,
-        step=10,
-        precision=3,
-        subtype='XYZ',
-        unit='LENGTH',
-        size=3
-    ) # type: ignore
     mario_scale: bpy.props.FloatProperty(
         name="Blender to SM64 Scale",
         default=100
